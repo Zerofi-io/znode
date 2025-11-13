@@ -211,7 +211,7 @@ class ZNode {
     }
   }
 
-  async finalizeClusterWithMultisigCoordination(clusterId, selectedAddrs) {
+  async finalizeClusterWithMultisigCoordination() {
     try {
       // Fetch forming cluster multisig info list (addresses aligned to selectedAddrs)
       const [addrList, infoList] = await this.registry.getFormingClusterMultisigInfo();
@@ -290,7 +290,8 @@ class ZNode {
         const isSelected = selectedNodes.map(a => a.toLowerCase()).includes(this.wallet.address.toLowerCase());
         const lastSelMs = Number(lastSelection) * 1000;
         const ageMs = Date.now() - lastSelMs;
-        const stale = completed || !lastSelection || ageMs > 10 * 60 * 1000; // >10 minutes or completed
+        const noClusterYet = (Number(lastSelection) === 0) && selectedCount === 0 && !completed;
+        const stale = !noClusterYet && (completed || Number(lastSelection) === 0 || ageMs > 10 * 60 * 1000); // stale only if there was a prior cluster or it's completed
         
         const shownSelected = stale ? 0 : selectedCount;
         console.log(`Queue: ${queueLen} | Selected: ${shownSelected}/11 | Clusters: ${clusterCount} | CanRegister: ${canRegister} | Completed: ${completed}`);
@@ -325,7 +326,8 @@ class ZNode {
         }
 
         // Attempt to trigger selection if conditions met and data not stale
-        if (!stale && selectedCount < 11 && (Number(queueLen) + selectedCount) >= 11) {
+        const canSelectNow = (selectedCount < 11) && ((Number(queueLen) + selectedCount) >= 11);
+        if (canSelectNow) {
           try {
             const tx = await this.registry.selectNextNode();
             await tx.wait();
@@ -346,20 +348,37 @@ class ZNode {
           console.log('✅ Selected for cluster! Waiting for formation to complete...');
         }
 
-        // If a full forming cluster exists, elect coordinator deterministically and finalize
-        if (selectedCount === 11 && completed) {
+        // If a full forming cluster exists (in-progress), elect coordinator deterministically and finalize
+        if (selectedCount === 11) {
           try {
-            const [idx, last, done] = await this.registry.currentFormingCluster();
-            const clusterId = await this.registry.allClusters(idx);
-            const myIndex = selectedNodes.map(a => a.toLowerCase()).indexOf(this.wallet.address.toLowerCase());
-            if (myIndex >= 0) {
-              const seed = BigInt(last);
-              const coordIndex = Number(seed % 11n);
-              if (myIndex === coordIndex) {
-                console.log('🎯 I am the coordinator for this cluster. Finalizing...');
-                await this.finalizeClusterWithMultisigCoordination(clusterId, selectedNodes);
-              } else {
-                console.log('⏳ Waiting for coordinator to finalize cluster...');
+            let clusterId = null;
+            try {
+              const [idx, last, done] = await this.registry.currentFormingCluster();
+              clusterId = await this.registry.allClusters(idx);
+            } catch (e1) {
+              try {
+                clusterId = await this.registry.getDepositCluster();
+              } catch (e2) {
+                console.log('Finalize check: could not determine clusterId yet');
+              }
+            }
+            if (clusterId) {
+              const myIndex = selectedNodes.map(a => a.toLowerCase()).indexOf(this.wallet.address.toLowerCase());
+              if (myIndex >= 0) {
+                // Use lastSelection as seed if available, fallback to hash of clusterId
+                let seed;
+                try { seed = BigInt(lastSelection || 0); } catch { seed = 0n; }
+                if (seed === 0n) {
+                  const hex = clusterId.replace('0x','');
+                  seed = BigInt('0x' + (hex.slice(0,16) || '1'));
+                }
+                const coordIndex = Number(seed % 11n);
+                if (myIndex === coordIndex) {
+                  console.log('🎯 I am the coordinator for this cluster. Finalizing...');
+                  await this.finalizeClusterWithMultisigCoordination();
+                } else {
+                  console.log('⏳ Waiting for coordinator to finalize cluster...');
+                }
               }
             }
           } catch (e) {
