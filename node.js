@@ -288,13 +288,14 @@ class ZNode {
       const lastSelMs = Number(lastSelection) * 1000;
       const ageMs = Date.now() - lastSelMs;
       // Stale round: contract reports completed, selected cleared, and registration window open
-      const staleRound = completed && selectedNodes.length === 0 && canRegister && ageMs > 2 * 60 * 1000;
-      // Also handle degenerate case: we're marked inQueue but global queue is 0 and window open
-      const degenerate = inQueue && Number(queueLen) === 0 && canRegister && ageMs > 2 * 60 * 1000;
-      if (!isSelected && registered && (staleRound || degenerate)) {
+      const staleRound = completed && selectedNodes.length === 0 && canRegister && ageMs > 60 * 1000;
+      const needsQueue = (!registered || (registered && !inQueue));
+      // Also handle degenerate case: marked inQueue but global queue is 0 and window open
+      const degenerate = inQueue && Number(queueLen) === 0 && canRegister && ageMs > 60 * 1000;
+      if (staleRound || degenerate || needsQueue) {
         const now = Date.now();
         this._lastRequeueTs = this._lastRequeueTs || 0;
-        if (now - this._lastRequeueTs < 5 * 60 * 1000) {
+        if (now - this._lastRequeueTs < 2 * 60 * 1000) {
           return; // backoff 5m
         }
         console.log('↻ Re-queuing: previous round cleared without forming (or degenerate queue).');
@@ -377,7 +378,7 @@ class ZNode {
               try {
                 clusterId = await this.registry.getDepositCluster();
               } catch (e2) {
-                console.log('Finalize check: could not determine clusterId yet');
+                if (selectedNodes.length === 11) console.log('Finalize check: could not determine clusterId yet');
               }
             }
             if (clusterId) {
