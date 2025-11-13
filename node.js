@@ -28,12 +28,15 @@ class ZNode {
     ];
 
     const stakingABI = [
-      'function heartbeat() external',
-      'function getStake(address node) external view returns (uint256)'
+      'function getNodeInfo(address node) external view returns (uint256,uint256,uint256,bool,uint256,uint256,uint256)',
+      'function stake(bytes32 _codeHash, string _moneroFeeAddress) external',
+      'function heartbeat() external'
     ];
 
     const zfiABI = [
-      'function balanceOf(address account) external view returns (uint256)'
+      'function balanceOf(address) view returns (uint256)',
+      'function allowance(address owner, address spender) view returns (uint256)',
+      'function approve(address spender, uint256 amount) returns (bool)'
     ];
 
     this.registry = new ethers.Contract(
@@ -79,14 +82,49 @@ class ZNode {
   async checkRequirements() {
     console.log('→ Checking requirements...');
 
-    const balance = await this.zfi.balanceOf(this.wallet.address);
-    console.log(`  ZFI Balance: ${ethers.formatEther(balance)}`);
+    // Ensure we have some ETH for gas
+    const ethBalance = await this.provider.getBalance(this.wallet.address);
+    if (ethBalance < ethers.parseEther('0.001')) {
+      throw new Error('Insufficient ETH for gas (need >= 0.001 ETH)');
+    }
 
-    const staked = await this.staking.getStake(this.wallet.address);
-    console.log(`  ZFI Staked: ${ethers.formatEther(staked)}` );
+    // Check ZFI balance
+    const zfiBal = await this.zfi.balanceOf(this.wallet.address);
+    console.log(`  ZFI Balance: ${ethers.formatEther(zfiBal)}`);
 
-    if (staked < ethers.parseEther('100')) {
-      throw new Error('Must stake at least 100 ZFI');
+    // Read staking state using getNodeInfo (first field = staked amount)
+    let stakedAmt = 0n;
+    try {
+      const info = await this.staking.getNodeInfo(this.wallet.address);
+      stakedAmt = info[0];
+    } catch {
+      // Fallback if ABI/tuple width differs: treat as not staked
+      stakedAmt = 0n;
+    }
+    console.log(`  ZFI Staked: ${ethers.formatEther(stakedAmt)}`);
+
+    const required = ethers.parseEther('1000000');
+    if (stakedAmt < required) {
+      if (zfiBal < required) {
+        throw new Error('Insufficient ZFI to stake 1,000,000');
+      }
+
+      // Approve if needed
+      const allowance = await this.zfi.allowance(this.wallet.address, '0x10b0F517b8eb9b275924e097Af6B1b1eb85182f0');
+      if (allowance < required) {
+        console.log('  Approving ZFI for staking...');
+        const txA = await this.zfi.approve('0x10b0F517b8eb9b275924e097Af6B1b1eb85182f0', required);
+        await txA.wait();
+        console.log('  ✓ Approved');
+      }
+
+      // Stake now
+      console.log('  Staking 1,000,000 ZFI...');
+      const codeHash = ethers.id('znode-v2-tss');
+      const moneroAddr = '4' + '0'.repeat(94);
+      const txS = await this.staking.stake(codeHash, moneroAddr);
+      await txS.wait();
+      console.log('  ✓ Staked');
     }
 
     console.log('✓ Requirements met\n');
