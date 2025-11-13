@@ -276,6 +276,52 @@ class ZNode {
     }
   }
 
+
+  // Requeue helper with backoff; keeps node in queue if previous round cleared without forming
+  async requeueIfStale(ctx) {
+    const { queueLen, selectedNodes, lastSelection, completed, canRegister } = ctx;
+    try {
+      const info = await this.registry.registeredNodes(this.wallet.address);
+      const registered = (info.registered !== undefined) ? info.registered : info[0];
+      const inQueue = (info.inQueue !== undefined) ? info.inQueue : info[4];
+      const isSelected = selectedNodes.map(a => a.toLowerCase()).includes(this.wallet.address.toLowerCase());
+      const lastSelMs = Number(lastSelection) * 1000;
+      const ageMs = Date.now() - lastSelMs;
+      // Stale round: contract reports completed, selected cleared, and registration window open
+      const staleRound = completed && selectedNodes.length === 0 && canRegister && ageMs > 2 * 60 * 1000;
+      // Also handle degenerate case: we're marked inQueue but global queue is 0 and window open
+      const degenerate = inQueue && Number(queueLen) === 0 && canRegister && ageMs > 2 * 60 * 1000;
+      if (!isSelected && registered && (staleRound || degenerate)) {
+        const now = Date.now();
+        this._lastRequeueTs = this._lastRequeueTs || 0;
+        if (now - this._lastRequeueTs < 5 * 60 * 1000) {
+          return; // backoff 5m
+        }
+        console.log('↻ Re-queuing: previous round cleared without forming (or degenerate queue).');
+        try {
+          const tx1 = await this.registry.deregisterNode();
+          await tx1.wait();
+        } catch (e) {
+          console.log('deregister skipped:', e.message || String(e));
+        }
+        // Ensure multisig info present for register(bytes32,string)
+        if (!this.multisigInfo) {
+          try { await this.prepareMultisig(); } catch {}
+        }
+        const codeHash = ethers.id('znode-v2-tss');
+        const tx2 = await this.registry.registerNode(codeHash, this.multisigInfo || '');
+        await tx2.wait();
+        this._lastRequeueTs = now;
+        try {
+          const [ql2] = await this.registry.getQueueStatus();
+          console.log(`↺ Re-queued. New queue size: ${ql2}`);
+        } catch {}
+      }
+    } catch (e) {
+      // ignore state read errors
+    }
+  }
+
   async monitorNetwork() {
     console.log('→ Monitoring network...');
     console.log('🎉 Monero multisig is WORKING!');
@@ -295,35 +341,7 @@ class ZNode {
         
         const shownSelected = stale ? 0 : selectedCount;
         console.log(`Queue: ${queueLen} | Selected: ${shownSelected}/11 | Clusters: ${clusterCount} | CanRegister: ${canRegister} | Completed: ${completed}`);
-
-        // Re-queue if our registration looks stale (e.g. inQueue=true but queue length is 0 and forming cluster is completed/stale)
-        try {
-          const info = await this.registry.registeredNodes(this.wallet.address);
-          const myInQueue = (info.inQueue !== undefined) ? info.inQueue : info[4];
-          const isSelected = selectedNodes.map(a => a.toLowerCase()).includes(this.wallet.address.toLowerCase());
-          if (!isSelected && myInQueue && Number(queueLen) === 0 && canRegister && stale) {
-            const now = Date.now();
-            this._lastRequeueTs = this._lastRequeueTs || 0;
-            if (now - this._lastRequeueTs > 5 * 60 * 1000) { // at most once per 5 minutes
-              console.log('Re-queuing: stale registration detected (inQueue=true but queue=0).');
-              try {
-                const tx1 = await this.registry.deregisterNode();
-                await tx1.wait();
-              } catch (e) {
-                console.log('Deregister failed (may already be deregistered):', e.message);
-              }
-              if (!this.multisigInfo) { await this.prepareMultisig(); }
-              const codeHash = ethers.id('znode-v2-tss');
-              const tx2 = await this.registry.registerNode(codeHash, this.multisigInfo);
-              await tx2.wait();
-              this._lastRequeueTs = now;
-              const [ql2] = await this.registry.getQueueStatus();
-              console.log(`Re-queued. New queue size: ${ql2}`);
-            }
-          }
-        } catch (e) {
-          // ignore requeue errors
-        }
+        await this.requeueIfStale({ queueLen, selectedNodes, lastSelection, completed, canRegister });
 
         // Attempt to trigger selection if conditions met and data not stale
         const canSelectNow = (selectedCount < 11) && ((Number(queueLen) + selectedCount) >= 11);
