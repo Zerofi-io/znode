@@ -17,12 +17,13 @@ class ZNode {
       .substring(0, 32);
 
     const registryABI = [
-      'function registerNode() external',
+      'function registerNode(bytes32 codeHash, string multisigInfo) external',
+      'function selectNextNode() external',
       'function deregisterNode() external',
       'function getQueueStatus() external view returns (uint256, uint256, bool)',
       'function getFormingCluster() external view returns (address[] memory, uint256, bool)',
       'function getActiveClusterCount() external view returns (uint256)',
-      'function registeredNodes(address) external view returns (bool registered, bool inQueue)',
+      'function registeredNodes(address) view returns (bool registered, bytes32 codeHash, string multisigInfo, uint256 registeredAt, bool inQueue, uint256 multisigSubmittedBlock)',
       'event NodeRegistered(address indexed node)',
       'event ClusterFormed(bytes32 indexed clusterId, address[] members)'
     ];
@@ -40,19 +41,19 @@ class ZNode {
     ];
 
     this.registry = new ethers.Contract(
-      '0x26B59a70B59Bf486D4cEFa292d8BfC80f1E0F636',
+      '0xC35CC6a4176dB55dbb290EDbEbae5A08BE5c6c8d',
       registryABI,
       this.wallet
     );
 
     this.staking = new ethers.Contract(
-      '0x10b0F517b8eb9b275924e097Af6B1b1eb85182f0',
+      '0x4292E4Af84cea07D2654CB5D97141C7D6a23be01',
       stakingABI,
       this.wallet
     );
 
     this.zfi = new ethers.Contract(
-      '0xAa15b1F362315B09B19Ab5D5274D1CDD59588F96',
+      '0x1736668a18AE7C46011dF93A12a6b9438174814F',
       zfiABI,
       this.wallet
     );
@@ -110,10 +111,10 @@ class ZNode {
       }
 
       // Approve if needed
-      const allowance = await this.zfi.allowance(this.wallet.address, '0x10b0F517b8eb9b275924e097Af6B1b1eb85182f0');
+      const allowance = await this.zfi.allowance(this.wallet.address, '0x4292E4Af84cea07D2654CB5D97141C7D6a23be01');
       if (allowance < required) {
         console.log('  Approving ZFI for staking...');
-        const txA = await this.zfi.approve('0x10b0F517b8eb9b275924e097Af6B1b1eb85182f0', required);
+        const txA = await this.zfi.approve('0x4292E4Af84cea07D2654CB5D97141C7D6a23be01', required);
         await txA.wait();
         console.log('  ✓ Approved');
       }
@@ -223,35 +224,99 @@ class ZNode {
       await new Promise(r => setTimeout(r, 2000));
     }
 
-    const tx = await this.registry.registerNode();
+    // Ensure we have multisig info ready
+    if (!this.multisigInfo) {
+      await this.prepareMultisig();
+    }
+    const codeHash = ethers.id('znode-v2-tss');
+    const tx = await this.registry.registerNode(codeHash, this.multisigInfo);
     await tx.wait();
     
-    console.log('✓ Registered to queue\n');
+    try {
+      const [queueLen] = await this.registry.getQueueStatus();
+      console.log(`✓ Registered to queue (queue size: ${queueLen})\n`);
+    } catch {
+      console.log('✓ Registered to queue\n');
+    }
   }
 
   async monitorNetwork() {
-    console.log('→ Monitoring network...\n');
+    console.log('→ Monitoring network...');
     console.log('🎉 Monero multisig is WORKING!');
     console.log('Wallet has password and multisig is enabled.\n');
     
-    // Monitor for cluster formation
-    setInterval(async () => {
+    const printStatus = async () => {
       try {
-        const [selectedNodes, , completed] = await this.registry.getFormingCluster();
+        const [queueLen, , canRegister] = await this.registry.getQueueStatus();
+        const [selectedNodes, lastSelection, completed] = await this.registry.getFormingCluster();
+        const clusterCount = await this.registry.getActiveClusterCount();
+        const selectedCount = selectedNodes.length;
+        const isSelected = selectedNodes.map(a => a.toLowerCase()).includes(this.wallet.address.toLowerCase());
+        const lastSelMs = Number(lastSelection) * 1000;
+        const ageMs = Date.now() - lastSelMs;
+        const stale = completed || !lastSelection || ageMs > 10 * 60 * 1000; // >10 minutes or completed
         
-        if (selectedNodes.length > 0 && !completed) {
-          const isSelected = selectedNodes.includes(this.wallet.address);
-          
-          if (isSelected) {
-            console.log(`\n✅ Selected for cluster! (${selectedNodes.length} nodes)`);
-            // TODO: Implement multisig coordination
+        const shownSelected = stale ? 0 : selectedCount;
+        console.log(`Queue: ${queueLen} | Selected: ${shownSelected}/11 | Clusters: ${clusterCount} | CanRegister: ${canRegister} | Completed: ${completed}`);
+
+        // Re-queue if our registration looks stale (e.g. inQueue=true but queue length is 0 and forming cluster is completed/stale)
+        try {
+          const info = await this.registry.registeredNodes(this.wallet.address);
+          const myInQueue = (info.inQueue !== undefined) ? info.inQueue : info[4];
+          const isSelected = selectedNodes.map(a => a.toLowerCase()).includes(this.wallet.address.toLowerCase());
+          if (!isSelected && myInQueue && Number(queueLen) === 0 && canRegister && stale) {
+            const now = Date.now();
+            this._lastRequeueTs = this._lastRequeueTs || 0;
+            if (now - this._lastRequeueTs > 5 * 60 * 1000) { // at most once per 5 minutes
+              console.log('Re-queuing: stale registration detected (inQueue=true but queue=0).');
+              try {
+                const tx1 = await this.registry.deregisterNode();
+                await tx1.wait();
+              } catch (e) {
+                console.log('Deregister failed (may already be deregistered):', e.message);
+              }
+              const tx2 = await this.registry.registerNode();
+              await tx2.wait();
+              this._lastRequeueTs = now;
+              const [ql2] = await this.registry.getQueueStatus();
+              console.log(`Re-queued. New queue size: ${ql2}`);
+            }
+          }
+        } catch (e) {
+          // ignore requeue errors
+        }
+
+        // Attempt to trigger selection if conditions met and data not stale
+        if (!stale && selectedCount < 11 && (Number(queueLen) + selectedCount) >= 11) {
+          try {
+            const tx = await this.registry.selectNextNode();
+            await tx.wait();
+            console.log(`Triggered selection: ${selectedCount + 1}/11`);
+          } catch (e) {
+            const msg = (e && e.message) ? e.message : String(e);
+            if (!/ARRAY_RANGE_ERROR|interval|full|No valid nodes|CALL_EXCEPTION/i.test(msg)) {
+              console.log('Selection trigger failed:', msg);
+            }
           }
         }
-      } catch (error) {
-        // Ignore monitoring errors
+
+        if (stale && selectedCount > 0) {
+          const ageMin = Math.floor(ageMs / 60000);
+          console.log(`(stale forming cluster: ${selectedCount} nodes, last update ${ageMin}m ago)`);
+        }
+        if (!stale && isSelected) {
+          console.log('✅ Selected for cluster! Waiting for formation to complete...');
+        }
+      } catch (e) {
+        console.log('Monitor error:', e.message);
       }
-    }, 60000);
+    };
+    
+    // Print immediately and then on interval
+    await printStatus();
+    setInterval(printStatus, 60000);
   }
+
 }
 
 if (require.main === module) {
