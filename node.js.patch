@@ -1,0 +1,29 @@
+--- a/node.js
++++ b/node.js
+@@ -337,8 +337,22 @@ class ZNode {
+     if (completed && !this.clusterId) {
+       const isSelected = selectedNodes.some(
+         addr => addr.toLowerCase() === this.wallet.address.toLowerCase()
+       );
+ 
+       if (isSelected && selectedCount === CLUSTER_SIZE) {
+-        console.log('\n🎉 Selected for cluster! Finalizing with TSS...\n');
+-        await this.finalizeClusterWithTSS();
++        // Deterministic coordinator election using lastSelectionTime as seed
++        const seed = ethers.toBigInt(lastSelectionTime);
++        const coordinatorIndex = Number(seed % BigInt(CLUSTER_SIZE));
++        const coordinator = selectedNodes[coordinatorIndex];
++        const isCoordinator = coordinator.toLowerCase() === this.wallet.address.toLowerCase();
++        
++        console.log(`\n🎉 Selected for cluster!`);
++        console.log(`   Coordinator: ${coordinator.slice(0, 10)}... (node ${coordinatorIndex + 1}/${CLUSTER_SIZE})`);
++        
++        if (isCoordinator) {
++          console.log(`   🎯 I am the coordinator! Finalizing with TSS...\n`);
++          await this.finalizeClusterWithTSS();
++        } else {
++          console.log(`   ⏳ Waiting for coordinator to finalize cluster...\n`);
++        }
+       }
+     }
+   }

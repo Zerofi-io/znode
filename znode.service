@@ -1,0 +1,17 @@
+[Unit]
+Description=zNode - XMR Bridge Operator
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/zNode
+ExecStartPre=/bin/bash start-monero-rpc.sh
+ExecStart=/usr/bin/node node.js
+Restart=always
+RestartSec=10
+StandardOutput=append:/root/zNode/node.log
+StandardError=append:/root/zNode/node.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,659 @@
+require("dotenv").config();
+const { ethers } = require('ethers');
+const MoneroRPC = require('./monero-rpc');
+const EnhancedTSSManager = require('./tss');
+const { SecureSigningSystem, RefreshCoordinator } = require('./secure-signing-system');
+const { execSync } = require('child_process');
+
+const CLUSTER_SIZE = 11;
+const REQUIRED_SIGNERS = 8;
+
+class ZNode {
+  constructor() {
+    this.provider = new ethers.JsonRpcProvider(
+      process.env.RPC_URL || 'https://eth-sepolia.g.alchemy.com/v2/vO5dWTSB5yRyoMsJTnS6V'
+    );
+    
+    this.wallet = new ethers.Wallet(process.env.PRIVATE_KEY, this.provider);
+    
+    // Contract ABIs
+    const registryABI = [
+      'function selectNextNode() external',
+      'function registerNode(bytes32 codeHash, string moneroPublicKey) external',
+      'function registeredNodes(address) external view returns (bool registered, bytes32 codeHash, string multisigInfo, uint256 registeredAt, bool inQueue, uint256 multisigSubmittedBlock)',
+      'function getActiveClusterCount() external view returns (uint256)',
+      "function allClusters(uint256) external view returns (bytes32)",
+      'function getQueueStatus() external view returns (uint256, uint256, bool)',
+      'function getFormingCluster() external view returns (address[], uint256, bool)',
+      'function getFormingClusterMultisigInfo() external view returns (address[], string[])',
+      'function confirmCluster(string moneroAddress) external',
+      'function getClusterInfo(bytes32 clusterId) external view returns (address[11], string, address[], uint256, uint256, bool)',
+      'function getShareEpochInfo(bytes32 clusterId, uint256 epoch) external view returns (address[], uint256, uint256, bool)',
+      'function submitSharesForEpoch(bytes32 clusterId, uint256 epoch, bytes encryptedShares) external',
+      'function getSharesForEpoch(bytes32 clusterId, uint256 epoch, address node) external view returns (bytes)',
+      'function proposeRefresh(bytes32 clusterId, address[] newMembers, address[] removedMembers) external',
+      'function approveRefresh(bytes32 clusterId, uint256 proposalId) external',
+      'function activeProposal(bytes32 clusterId) external view returns (uint256)',
+      'function checkAndTriggerRefresh(bytes32 clusterId) external',
+      'event RefreshExecuted(bytes32 indexed clusterId, uint256 newEpoch)',
+      'event RefreshProposed(bytes32 indexed clusterId, uint256 indexed proposalId, address proposer, address[] newMembers, address[] removedMembers)',
+      'event EpochCompleted(bytes32 indexed clusterId, uint256 indexed epoch)',
+      'function getMultisigSetupStatus(bytes32 clusterId) external view returns (bool, uint8, string, bool)',
+      'function submitMultisigAddress(bytes32 clusterId, string multisigAddress) external',
+      'function submitKeyExchange(bytes32 clusterId, address recipient, bytes encryptedKey) external',
+      'function getEncryptedKey(bytes32 clusterId, address from) external view returns (bytes)',
+      'event MultisigSetupReady(bytes32 indexed clusterId)',
+      'event MultisigCreated(bytes32 indexed clusterId, string multisigAddress)',
+      'event KeyExchangeCompleted(bytes32 indexed clusterId)'
+    ];
+    
+    const stakingABI = [
+      'function getNodeInfo(address) external view returns (uint256, uint256, uint256, bool, uint256, uint256, uint256)',
+      'function stake(bytes32 _codeHash, string _moneroFeeAddress) external',
+      'function heartbeat() external'
+    ];
+    
+    this.registry = new ethers.Contract(
+      "0x26B59a70B59Bf486D4cEFa292d8BfC80f1E0F636",
+      registryABI,
+      this.wallet
+    );
+    
+    this.staking = new ethers.Contract(
+      "0x10b0F517b8eb9b275924e097Af6B1b1eb85182f0",
+      stakingABI,
+      this.wallet
+    );
+    
+    const zfiABI = [
+      'function balanceOf(address) external view returns (uint256)',
+      'function approve(address spender, uint256 amount) external returns (bool)',
+      'function allowance(address owner, address spender) external view returns (uint256)'
+    ];
+    
+    this.zfi = new ethers.Contract(
+      "0xAa15b1F362315B09B19Ab5D5274D1CDD59588F96",
+      zfiABI,
+      this.wallet
+    );
+    
+    this.monero = new MoneroRPC({
+      url: process.env.MONERO_RPC_URL || 'http://127.0.0.1:18083'
+    });
+    
+    this.walletName = `znode3_${this.wallet.address.slice(2, 10)}`;
+    this.multisigInfo = null;
+    this.clusterId = null;
+    this.refreshCoordinator = null;
+  }
+
+  async start() {
+    console.log('\n═══════════════════════════════════════');
+    console.log('     zNode - Dynamic TSS Edition');
+    console.log('═══════════════════════════════════════\n');
+    console.log(`Address: ${this.wallet.address}`);
+    console.log(`Network: Sepolia\n`);
+
+    await this.checkRequirements();
+    await this.setupMonero();
+    await this.registerToQueue();
+    await this.monitorNetwork();
+  }
+
+  async checkRequirements() {
+    console.log('→ Checking requirements...\n');
+
+    const ethBalance = await this.provider.getBalance(this.wallet.address);
+    console.log(`  ETH Balance: ${ethers.formatEther(ethBalance)}`);
+    
+    if (ethBalance < ethers.parseEther('0.001')) {
+      throw new Error('Insufficient ETH. Need at least 0.001 ETH for gas.');
+    }
+
+    const nodeInfo = await this.staking.getNodeInfo(this.wallet.address);
+    const stakedAmount = nodeInfo[0];
+    
+    console.log(`  Staked ZFI: ${ethers.formatEther(stakedAmount)}`);
+    
+    if (stakedAmount >= ethers.parseEther('1000000')) {
+      console.log('✓ Requirements met (1000000.0 ZFI already staked)\n');
+    } else {
+      // Auto-stake logic
+      const zfiBalance = await this.zfi.balanceOf(this.wallet.address);
+      console.log(`  ZFI Balance: ${ethers.formatEther(zfiBalance)}`);
+      
+      if (zfiBalance < ethers.parseEther('1000000')) {
+        throw new Error('Insufficient ZFI. Need 1M ZFI in wallet to stake.');
+      }
+      
+      console.log('  Approving ZFI for staking...');
+      const allowance = await this.zfi.allowance(this.wallet.address, await this.staking.getAddress());
+      
+      if (allowance < ethers.parseEther('1000000')) {
+        const approveTx = await this.zfi.approve(
+          await this.staking.getAddress(),
+          ethers.parseEther('1000000')
+        );
+        await approveTx.wait();
+        console.log('  ✓ ZFI approved');
+      }
+      
+      console.log('  Staking 1M ZFI...');
+      const codeHash = ethers.id('znode-v2-tss');
+      const moneroAddr = '4' + '0'.repeat(94);
+      const stakeTx = await this.staking.stake(codeHash, moneroAddr);
+      await stakeTx.wait();
+      console.log('✓ Successfully staked 1M ZFI\n');
+    }
+  }
+
+
+  async setupMonero() {
+    console.log('→ Setting up Monero...');
+    
+    // Wait for monero RPC to be ready
+    for (let i = 1; i <= 20; i++) {
+      try {
+        await this.monero.openWallet(this.walletName);
+        console.log(`✓ Wallet opened: ${this.walletName}`);
+        break;
+      } catch (error) {
+        if (error.code === 'ECONNREFUSED' && i < 10) {
+          console.log(`  Waiting for Monero RPC (attempt ${i}/10)...`);
+          await new Promise(r => setTimeout(r, 3000));
+          continue;
+        }
+        
+        if (error.code === 'ECONNREFUSED') {
+          throw new Error('Monero RPC not available after 60s. Is monero-wallet-rpc running?');
+        }
+        
+        console.log('  Creating wallet...');
+        await this.monero.createWallet(this.walletName);
+        console.log(`✓ Wallet created: ${this.walletName}`);
+        break;
+      }
+    }
+
+    // Note: prepareMultisig() is now called in Phase 2 when actually needed
+    console.log('✓ Wallet ready\n');
+  }
+
+  async registerToQueue() {
+    console.log('→ Registering to network...');
+    
+    // First, check current registration state from contract
+    try {
+      const nodeInfo = await this.registry.registeredNodes(this.wallet.address);
+      
+      if (nodeInfo.registered && nodeInfo.inQueue) {
+        console.log('✓ Already registered and in queue\n');
+        return;
+      }
+      
+      if (nodeInfo.registered && !nodeInfo.inQueue) {
+        // Registered but not in queue - need to deregister and re-register
+        console.log('  Detected stale registration, deregistering...');
+        const deregTx = await this.registry.deregisterNode();
+        await deregTx.wait();
+        console.log('  Deregistered, will re-register...');
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    } catch (e) {
+      console.log('  Could not check registration state:', e.message);
+    }
+    
+    // Now attempt registration
+    const codeHash = ethers.id('znode-v2-tss');
+    
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        // Prepare multisig info for registration
+        if (!this.multisigInfo) {
+          // Enable multisig experimental before preparing
+          await this.monero.call('set_attribute', { key: 'enable_multisig_experimental', value: '1' });
+          this.multisigInfo = await this.monero.prepareMultisig();
+        }
+        const tx = await this.registry.registerNode(codeHash, this.multisigInfo);
+        console.log('  Transaction sent:', tx.hash);
+        const receipt = await tx.wait();
+        console.log('  Transaction confirmed in block:', receipt.blockNumber);
+        
+        // Verify we're actually in the queue
+        await new Promise(r => setTimeout(r, 2000));
+        const nodeInfo = await this.registry.registeredNodes(this.wallet.address);
+        
+        if (!nodeInfo.inQueue) {
+          throw new Error('Registration succeeded but not in queue');
+        }
+        
+        const [queueSize] = await this.registry.getQueueStatus();
+        console.log('  Current queue size:', queueSize.toString());
+        
+        console.log('✓ Registered to cluster queue\n');
+        return;
+      } catch (error) {
+        if (error.message.includes('Already registered')) {
+          // This shouldn't happen after our state check, but handle it
+          console.log('  Got "Already registered" error, verifying queue status...');
+          const nodeInfo = await this.registry.registeredNodes(this.wallet.address);
+          if (nodeInfo.inQueue) {
+            console.log('✓ Confirmed in queue\n');
+            return;
+          } else {
+            console.log('  ERROR: Registered but not in queue. Deregistering...');
+            const deregTx = await this.registry.deregisterNode();
+            await deregTx.wait();
+            await new Promise(r => setTimeout(r, 2000));
+            continue; // Retry registration
+          }
+        }
+        
+        console.log(`  Registration attempt ${attempt}/3 failed:`, error.message);
+        if (attempt < 3) {
+          console.log(`  Retrying in ${attempt * 2}s...`);
+          await new Promise(r => setTimeout(r, attempt * 2000));
+        } else {
+          throw error;
+        }
+      }
+    }
+  }
+
+  async checkExistingCluster() {
+    // Check ALL clusters and find the LATEST one we're in (complete or incomplete)
+    const clusterCount = await this.registry.getActiveClusterCount();
+    let latestCluster = null;
+    let latestIndex = -1;
+    
+    console.log('\n  Checking', clusterCount.toString(), 'clusters for membership...');
+    
+    for (let i = 0; i < clusterCount; i++) {
+      try {
+        const clusterId = await this.registry.allClusters(i);
+        const clusterInfo = await this.registry.getClusterInfo(clusterId);
+        
+        if (clusterInfo[0].includes(this.wallet.address)) {
+          // Check if epoch has shares (indicates cluster completed TSS)
+          try {
+            const epochInfo = await this.registry.getShareEpochInfo(clusterId, 0);
+            const isComplete = epochInfo[3];
+            console.log('  ✓ Found in cluster', i, isComplete ? '(complete)' : '(incomplete)');
+            latestCluster = clusterId;
+            latestIndex = i;
+          } catch (e) {
+            console.log('  ✓ Found in cluster', i, '(epoch info unavailable)');
+          latestCluster = clusterId;
+          latestIndex = i;
+          }
+        }
+      } catch (e) {
+        // Skip if cluster read fails
+      }
+    }
+    
+    if (latestCluster) {
+      console.log('\n✓ Using latest complete cluster', latestIndex);
+      this.clusterId = latestCluster;
+      console.log('  Cluster ID:', this.clusterId.slice(0, 18) + '...');
+      return true;
+    }
+    
+    return false;
+  }
+
+
+  async monitorNetwork() {
+    // First check if already in a cluster
+    const inCluster = await this.checkExistingCluster();
+    if (inCluster) {
+      // Check if epoch is active (TSS completed)
+      try {
+        const epochInfo = await this.registry.getShareEpochInfo(this.clusterId, 0);
+        const epochActive = epochInfo[3];
+        
+        if (epochActive) {
+          console.log('\n→ Cluster fully operational\n');
+          // TODO: Add cluster maintenance/monitoring here
+          return;
+        } else {
+          console.log('\n⚠️  Incomplete cluster detected (TSS not finalized)');
+          console.log('   Resuming share distribution for this cluster...');
+          await this.resumeShareDistribution();
+          return;
+        }
+      } catch (e) {
+        console.log('\n✓ Cluster operational (legacy mode)\n');
+        return;
+      }
+    }
+    
+    console.log('→ Monitoring network...\n');
+    console.log('Node is active and monitoring for cluster formation.');
+    console.log("Nodes selected continuously until cluster forms.\n");
+
+    // Send heartbeat every 30 minutes
+    setInterval(async () => {
+      try {
+        await this.staking.heartbeat();
+      } catch (error) {
+        console.error("Heartbeat failed:", error.message);
+      }
+    }, 30 * 60 * 1000);
+
+    setInterval(async () => {
+      try {
+        await this.checkClusterStatus();
+      } catch (error) {
+        console.error('Monitor error:', error.message);
+      }
+    }, 60000); // Every minute
+  }
+
+  async checkClusterStatus() {
+    // Get queue and cluster status
+    const [queueLength, , canRegister] = await this.registry.getQueueStatus();
+    const [selectedNodes, lastSelectionTime, completed] = await this.registry.getFormingCluster();
+    const clusterCount = await this.registry.getActiveClusterCount();
+    const selectedCount = selectedNodes.length;
+    
+    // Calculate time until next selection
+    const now = Math.floor(Date.now() / 1000);
+    const timeSinceLastSelection = now - Number(lastSelectionTime);
+    const timeUntilNext = 0;
+    const hoursRemaining = Math.floor(timeUntilNext / 3600);
+    
+    // Log status update
+    const totalNodes = Number(queueLength) + selectedCount;
+    console.log(`\\rGood: ${queueLength}/${totalNodes} | Selected: ${selectedCount}/11 | Clusters: ${clusterCount} | Next: ${hoursRemaining > 0 ? hoursRemaining + "h" : "Ready"}`)
+    
+    // Auto-trigger selection if ready and cluster not full
+    // First cluster (no existing clusters): no time check needed
+    // No interval - continuous selection
+    const canTrigger = selectedCount < 11 && (Number(queueLength) + selectedCount) >= 11;
+    const isFirstCluster = selectedCount === 0; // First cluster being formed
+    const intervalMet = true; // Always allow selection
+    
+    if (canTrigger && intervalMet) {
+      try {
+        console.log('\n→ Triggering node selection...');
+        const tx = await this.registry.selectNextNode();
+        await tx.wait();
+        console.log(`✓ Node selected (${selectedCount + 1}/11)\n`);
+      } catch (e) {
+        // Silently ignore common race conditions
+        if (e.message && !e.message.includes("ARRAY_RANGE_ERROR") && !e.message.includes("Selection interval not met") && !e.message.includes("Cluster full") && !e.message.includes("No valid nodes") && e.code !== "CALL_EXCEPTION") {
+          console.log('  Selection trigger failed:', e.message.split('\n')[0]);
+        }
+      }
+    };
+
+    if (completed && !this.clusterId) {
+      const isSelected = selectedNodes.some(
+        addr => addr.toLowerCase() === this.wallet.address.toLowerCase()
+      );
+
+      if (isSelected && selectedCount === CLUSTER_SIZE) {
+        // Deterministic coordinator election using lastSelectionTime as seed
+        const seed = ethers.toBigInt(lastSelectionTime);
+        const coordinatorIndex = Number(seed % BigInt(CLUSTER_SIZE));
+        const coordinator = selectedNodes[coordinatorIndex];
+        const isCoordinator = coordinator.toLowerCase() === this.wallet.address.toLowerCase();
+        
+        console.log(`\n🎉 Selected for cluster!`);
+        console.log(`   Coordinator: ${coordinator.slice(0, 10)}... (node ${coordinatorIndex + 1}/${CLUSTER_SIZE})`);
+        
+        if (isCoordinator) {
+          console.log(`   🎯 I am the coordinator! Finalizing with TSS...\n`);
+          await this.finalizeClusterWithMultisigCoordination();
+        } else {
+          console.log(`   ⏳ Waiting for coordinator to finalize cluster...\n`);
+        }
+      }
+    }
+  }
+
+// PHASE 2: Create Multisig Locally
+async finalizeClusterWithMultisigCoordination() {
+  console.log('→ Phase 2: Creating multisig wallet locally...');
+  
+  try {
+    const [addresses] = await this.registry.getFormingClusterMultisigInfo();
+    console.log(`  Got ${addresses.length} node addresses`);
+    
+    // Fetch all multisigInfo strings
+    const multisigInfoList = [];
+    for (let i = 0; i < addresses.length; i++) {
+      if (addresses[i].toLowerCase() === this.wallet.address.toLowerCase()) {
+        // Skip self, will add own info separately
+        continue;
+      }
+      const nodeInfo = await this.registry.registeredNodes(addresses[i]);
+      multisigInfoList.push(nodeInfo.multisigInfo);
+    }
+    
+    // Use existing wallet (already created and prepared during startup)
+    
+    console.log('  Using existing wallet and multisigInfo from registration...');
+    console.log(`  Creating 8-of-11 multisig with ${multisigInfoList.length + 1} participants...`);
+    
+    // Create multisig locally using all infos (already fetched from contract)
+    
+    // Enable experimental multisig BEFORE creating multisig wallet
+    try {
+      await this.monero.call('set_attribute', { key: 'enable_multisig_experimental', value: '1' });
+      console.log('  Enabled experimental multisig');
+    } catch (e) {
+      console.log('  Note: Could not enable multisig via set_attribute:' , e.message);
+    }
+    
+    const result = await this.monero.makeMultisig(multisigInfoList, 8);
+    const multisigAddress = result.address;
+    
+    console.log(`✓ Multisig created: ${multisigAddress.slice(0, 12)}...`);
+    
+    // Enable experimental multisig AFTER creating multisig wallet
+    try {
+      await this.monero.call('set_attribute', { key: 'enable_multisig_experimental', value: '1' });
+      await this.monero.call('store');
+      console.log('  ✓ Experimental multisig enabled');
+      
+      // Wait and verify it's set
+      await new Promise(r => setTimeout(r, 1000));
+      const check = await this.monero.call('get_attribute', { key: 'enable_multisig_experimental' });
+      console.log(`  Verified attribute value: ${check.value}`);
+    } catch (e) {
+      console.log('  Warning: Could not enable experimental multisig:', e.message);
+    }
+    
+    // Calculate cluster ID (same way contract does it)
+    const clusterId = ethers.keccak256(
+      ethers.solidityPacked(['address[11]'], [addresses])
+    );
+    
+    // Submit multisig address to contract for verification
+    console.log('  Submitting multisig address to contract...');
+    try {
+      const tx = await this.registry.submitMultisigAddress(clusterId, multisigAddress);
+      await tx.wait();
+      console.log('✓ Multisig address submitted and verified');
+    } catch (e) {
+      if (e.message.includes('Already submitted')) {
+        console.log('✓ Multisig address already submitted');
+      } else if (e.message.includes('mismatch')) {
+        throw new Error('CRITICAL: Created different multisig than other nodes!');
+      } else {
+        throw e;
+      }
+    }
+    
+    // Only coordinator submits, so we just need to see addressSubmissions >= 1
+    console.log('  Checking multisig setup status...');
+    const setupStatus = await this.registry.getMultisigSetupStatus(clusterId);
+    if (setupStatus[1] >= 1) {
+      console.log('✓ Multisig address confirmed');
+    }
+    // Move to Phase 3: Key Exchange
+    await this.exchangeMultisigKeys(clusterId, addresses, result.multisigInfo);
+    
+  } catch (e) {
+    console.log('  Cluster finalization failed:', e.message);
+    throw e;
+  }
+}
+
+async waitForMultisigAddressConfirmation(clusterId) {
+  const maxAttempts = 60; // 5 minutes
+  for (let i = 0; i < maxAttempts; i++) {
+    const status = await this.registry.getMultisigSetupStatus(clusterId);
+    console.log(`  Progress: ${status[1]}/11 nodes submitted addresses`);
+    if (status[1] >= 11) {
+      console.log('✓ All nodes confirmed same multisig address');
+      return;
+    }
+    await new Promise(r => setTimeout(r, 5000));
+  }
+  throw new Error('Timeout waiting for multisig confirmation');
+}
+
+// PHASE 3: Exchange Keys (Encrypted)
+async exchangeMultisigKeys(clusterId, addresses, exchangeInfo) {
+  console.log('\n→ Phase 3: Exchanging multisig keys...');
+  // Enable experimental multisig (set it again to be sure)
+  try {
+    await this.monero.call('set_attribute', { key: 'enable_multisig_experimental', value: '1' });
+    await this.monero.call('store');
+    const check = await this.monero.call('get_attribute', { key: 'enable_multisig_experimental' });
+    console.log(`  Experimental multisig enabled: ${check.value}`);
+  } catch (e) {
+    console.log('  Warning: Could not verify multisig experimental:', e.message);
+  }
+  
+  // Get exchange keys from Monero
+  const exchangeKeys = await this.monero.exchangeMultisigKeys([exchangeInfo]);
+  
+  // For each other node, encrypt and submit their key
+  for (let i = 0; i < addresses.length; i++) {
+    const recipientAddr = addresses[i];
+    if (recipientAddr.toLowerCase() === this.wallet.address.toLowerCase()) {
+      continue; // Skip self
+    }
+    
+    console.log(`  Encrypting key for ${recipientAddr.slice(0, 10)}...`);
+    
+    // Get recipient's public key from their address
+    // For now, we'll use a simple encryption scheme
+    // TODO: Implement proper ECIES encryption
+    const encryptedKey = Buffer.from(exchangeKeys).toString('hex');
+    
+    try {
+      const tx = await this.registry.submitKeyExchange(
+        clusterId,
+        recipientAddr,
+        '0x' + encryptedKey
+      );
+      await tx.wait();
+    } catch (e) {
+      if (!e.message.includes('revert')) {
+        console.log(`    Warning: Failed to submit key for ${recipientAddr.slice(0, 10)}`);
+      }
+    }
+  }
+  
+  console.log('✓ Keys submitted to contract');
+  
+  // Wait for all nodes to submit keys
+  console.log('  Waiting for all nodes to exchange keys...');
+  await this.waitForKeyExchange(clusterId);
+  
+  // Retrieve and decrypt keys from other nodes
+  console.log('  Retrieving encrypted keys from other nodes...');
+  const decryptedKeys = [];
+  for (let i = 0; i < addresses.length; i++) {
+    const senderAddr = addresses[i];
+    if (senderAddr.toLowerCase() === this.wallet.address.toLowerCase()) {
+      continue;
+    }
+    
+    const encryptedKey = await this.registry.getEncryptedKey(clusterId, senderAddr);
+    if (encryptedKey && encryptedKey !== '0x') {
+      // TODO: Implement proper decryption
+      const decrypted = Buffer.from(encryptedKey.slice(2), 'hex').toString();
+      decryptedKeys.push(decrypted);
+    }
+  }
+  
+  console.log(`  Got keys from ${decryptedKeys.length} nodes`);
+  
+  // Finalize multisig with exchanged keys
+  console.log('  Finalizing multisig wallet...');
+  await this.monero.finalizeMultisig(decryptedKeys);
+  
+  console.log('\n✅ MULTISIG WALLET FULLY OPERATIONAL!');
+  console.log('🔒 8-of-11 threshold multisig');
+  console.log('🚀 Ready to process bridge transactions\n');
+}
+
+async waitForKeyExchange(clusterId) {
+  const maxAttempts = 60; // 5 minutes
+  for (let i = 0; i < maxAttempts; i++) {
+    const status = await this.registry.getMultisigSetupStatus(clusterId);
+    console.log(`  Progress: ${status[1]}/11 nodes submitted addresses`);
+    if (status.keyExchangeComplete) {
+      console.log('✓ All nodes completed key exchange');
+      return;
+    }
+    await new Promise(r => setTimeout(r, 5000));
+  }
+  throw new Error('Timeout waiting for key exchange');
+}
+
+
+  async resumeShareDistribution() {
+    try {
+      // Fetch cluster info to determine coordinator
+      const clusterInfo = await this.registry.getClusterInfo(this.clusterId);
+      const addresses = clusterInfo[0];
+      
+      // Elect coordinator using cluster ID as seed (deterministic)
+      const seed = ethers.toBigInt(this.clusterId);
+      const coordinatorIndex = Number(seed % BigInt(addresses.length));
+      const coordinator = addresses[coordinatorIndex];
+      const isCoordinator = coordinator.toLowerCase() === this.wallet.address.toLowerCase();
+      
+      console.log('  Resuming share distribution to', addresses.length, 'members...');
+      console.log(`  Coordinator: ${coordinator.slice(0, 10)}... (node ${coordinatorIndex + 1}/${addresses.length})`);
+      
+      if (!isCoordinator) {
+        console.log('  ⏳ Waiting for coordinator to distribute shares...');
+        return;
+      }
+      
+      console.log('  🎯 I am the coordinator! Distributing shares...');
+      
+      // Fetch private key and submit shares
+      const privateSpendKey = await this.monero.queryKey('spend_key');
+      const tss = new EnhancedTSSManager(this.wallet, this.registry, this.provider, this.clusterId);
+      await tss.distributeShares(privateSpendKey, addresses);
+      console.log('  ✓ Share distribution resumed');
+    } catch (e) {
+      if (e.message.includes('Already submitted')) {
+        console.log('  ✓ Shares already submitted for this cluster');
+      } else {
+        console.log('  Failed to resume share distribution:', e.message);
+      }
+    }
+  }
+
+}
+
+// Start node
+if (require.main === module) {
+  const node = new ZNode();
+  node.start().catch(error => {
+    console.error('Fatal error:', error);
+    process.exit(1);
+  });
+}
+
+module.exports = ZNode;

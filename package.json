@@ -1,0 +1,36 @@
+{
+  "name": "znode",
+  "version": "1.0.0",
+  "description": "XMR Bridge Node - Join the decentralized Monero-Ethereum bridge network",
+  "main": "node.js",
+  "scripts": {
+    "start": "node node.js",
+    "test": "node test-connection.js"
+  },
+  "keywords": [
+    "monero",
+    "ethereum",
+    "bridge",
+    "node",
+    "zfi"
+  ],
+  "author": "XMR Bridge Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@chainsafe/libp2p-noise": "^17.0.0",
+    "@helia/unixfs": "^6.0.3",
+    "@libp2p/bootstrap": "^12.0.8",
+    "@libp2p/mplex": "^12.0.8",
+    "@libp2p/tcp": "^11.0.7",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1",
+    "elliptic": "^6.6.1",
+    "ethers": "^6.9.0",
+    "helia": "^6.0.8",
+    "libp2p": "^3.1.0",
+    "secrets.js-grempe": "^2.0.0"
+  }
+}
