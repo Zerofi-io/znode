@@ -18,6 +18,10 @@ class ZNode {
 
     const registryABI = [
       'function registerNode(bytes32 codeHash, string multisigInfo) external',
+      'function submitMultisigAddress(bytes32 clusterId, string moneroAddress) external',
+      'function getFormingClusterMultisigInfo() external view returns (address[] memory, string[] memory)',
+      'function currentFormingCluster() external view returns (uint256, uint256, bool)',
+      'function allClusters(uint256) external view returns (bytes32)',
       'function selectNextNode() external',
       'function deregisterNode() external',
       'function getQueueStatus() external view returns (uint256, uint256, bool)',
@@ -207,6 +211,38 @@ class ZNode {
     }
   }
 
+  async finalizeClusterWithMultisigCoordination(clusterId, selectedAddrs) {
+    try {
+      // Fetch forming cluster multisig info list (addresses aligned to selectedAddrs)
+      const [addrList, infoList] = await this.registry.getFormingClusterMultisigInfo();
+      // Build peers' multisig info excluding self
+      const my = this.wallet.address.toLowerCase();
+      const peers = [];
+      for (let i = 0; i < addrList.length; i++) {
+        if (addrList[i].toLowerCase() === my) continue;
+        const info = infoList[i];
+        if (info && info.length > 0) peers.push(info);
+      }
+      if (peers.length < 7) { // need at least 7 peers to make 8-of-11
+        console.log(`Not enough multisig infos yet (${peers.length}+1). Waiting...`);
+        return false;
+      }
+      // Create 8-of-11 multisig locally
+      const res = await this.makeMultisig(8, peers);
+      const addr = res.address;
+      console.log(`✓ Multisig created locally: ${addr}`);
+      // Submit to registry
+      const tx = await this.registry.submitMultisigAddress(clusterId, addr);
+      await tx.wait();
+      console.log('✓ Submitted multisig address to registry');
+      return true;
+    } catch (e) {
+      console.log('Coordinator finalize error:', e.message || String(e));
+      return false;
+    }
+  }
+
+
   async registerToQueue() {
     console.log('→ Registering to network...');
     
@@ -275,7 +311,9 @@ class ZNode {
               } catch (e) {
                 console.log('Deregister failed (may already be deregistered):', e.message);
               }
-              const tx2 = await this.registry.registerNode();
+              if (!this.multisigInfo) { await this.prepareMultisig(); }
+              const codeHash = ethers.id('znode-v2-tss');
+              const tx2 = await this.registry.registerNode(codeHash, this.multisigInfo);
               await tx2.wait();
               this._lastRequeueTs = now;
               const [ql2] = await this.registry.getQueueStatus();
@@ -307,6 +345,28 @@ class ZNode {
         if (!stale && isSelected) {
           console.log('✅ Selected for cluster! Waiting for formation to complete...');
         }
+
+        // If a full forming cluster exists, elect coordinator deterministically and finalize
+        if (selectedCount === 11 && completed) {
+          try {
+            const [idx, last, done] = await this.registry.currentFormingCluster();
+            const clusterId = await this.registry.allClusters(idx);
+            const myIndex = selectedNodes.map(a => a.toLowerCase()).indexOf(this.wallet.address.toLowerCase());
+            if (myIndex >= 0) {
+              const seed = BigInt(last);
+              const coordIndex = Number(seed % 11n);
+              if (myIndex === coordIndex) {
+                console.log('🎯 I am the coordinator for this cluster. Finalizing...');
+                await this.finalizeClusterWithMultisigCoordination(clusterId, selectedNodes);
+              } else {
+                console.log('⏳ Waiting for coordinator to finalize cluster...');
+              }
+            }
+          } catch (e) {
+            console.log('Finalize check error:', e.message);
+          }
+        }
+
       } catch (e) {
         console.log('Monitor error:', e.message);
       }
