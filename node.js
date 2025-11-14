@@ -279,32 +279,30 @@ class ZNode {
 
   // Requeue helper with backoff; keeps node in queue if previous round cleared without forming
   async requeueIfStale(ctx) {
-    const { queueLen, selectedNodes, lastSelection, completed, canRegister } = ctx;
     try {
+      // Always refresh state from chain to avoid stale context
+      const [queueLen, , canRegister] = await this.registry.getQueueStatus();
+      const [selectedNodes, lastSelection, completed] = await this.registry.getFormingCluster();
       const info = await this.registry.registeredNodes(this.wallet.address);
       const registered = (info.registered !== undefined) ? info.registered : info[0];
       const inQueue = (info.inQueue !== undefined) ? info.inQueue : info[4];
-      const isSelected = selectedNodes.map(a => a.toLowerCase()).includes(this.wallet.address.toLowerCase());
-      const lastSelMs = Number(lastSelection) * 1000;
-      const ageMs = Date.now() - lastSelMs;
-      // Stale round: contract reports completed, selected cleared, and registration window open
-      const staleRound = completed && selectedNodes.length === 0 && canRegister;
+      const selectedCount = selectedNodes.length;
+      const staleRound = completed && selectedCount === 0 && canRegister;
       const needsQueue = (!registered || (registered && !inQueue));
       const degenerate = inQueue && Number(queueLen) === 0 && canRegister;
       if (staleRound || degenerate || needsQueue) {
         const now = Date.now();
         this._lastRequeueTs = this._lastRequeueTs || 0;
         if (now - this._lastRequeueTs < 60 * 1000) {
-          return; // backoff 5m
+          return; // backoff 60s
         }
-        console.log('↻ Re-queuing: previous round cleared without forming (or degenerate queue).');
+        console.log('↻ Re-queuing: reason staleRound=%s degenerate=%s needsQueue=%s', staleRound, degenerate, needsQueue);
         try {
           const tx1 = await this.registry.deregisterNode();
           await tx1.wait();
         } catch (e) {
-          console.log('deregister skipped:', e.message || String(e));
+          // ignore
         }
-        // Ensure multisig info present for register(bytes32,string)
         if (!this.multisigInfo) {
           try { await this.prepareMultisig(); } catch {}
         }
@@ -320,8 +318,10 @@ class ZNode {
         console.log('Requeue check: no action (staleRound=%s, degenerate=%s, needsQueue=%s)', staleRound, degenerate, needsQueue);
       }
     } catch (e) {
-      // ignore state read errors
+      // ignore
     }
+  }
+
   }
 
   async monitorNetwork() {
