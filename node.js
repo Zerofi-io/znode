@@ -26,7 +26,7 @@ class ZNode {
       'function selectNextNode() external',
       'function deregisterNode() external',
       'function getQueueStatus() external view returns (uint256, uint256, bool)',
-      'function getFormingCluster() external view returns (address[] memory, uint256, bool)',
+      'function getFormingCluster() external view returns (address[] memory, uint256)',
       'function getActiveClusterCount() external view returns (uint256)',
       'function clearStaleCluster() external',
       'function checkMultisigTimeout(bytes32 clusterId) external',
@@ -589,7 +589,8 @@ class ZNode {
     try {
       // Always refresh state from chain to avoid stale context
       const [queueLen, , canRegister] = await this.registry.getQueueStatus();
-      const [selectedNodes, lastSelection, completed] = await this.registry.getFormingCluster();
+      const [selectedNodes, lastSelection] = await this.registry.getFormingCluster();
+      const completed = selectedNodes.length === 11;
       const info = await this.registry.registeredNodes(this.wallet.address);
       const registered = info.registrationTime > 0
       // Treat any completed round with registration window open as stale; requeue to kick off a new round
@@ -630,7 +631,8 @@ class ZNode {
 
   async cleanupStaleCluster() {
     try {
-      const [selectedNodes, lastSelection, completed] = await this.registry.getFormingCluster();
+      const [selectedNodes, lastSelection] = await this.registry.getFormingCluster();
+      const completed = selectedNodes.length === 11;
       
       // Only clean up if there's a forming cluster
       if (selectedNodes.length === 0) return false;
@@ -690,7 +692,8 @@ class ZNode {
     const printStatus = async () => {
       try {
         const [queueLen, , canRegister] = await this.registry.getQueueStatus();
-        const [selectedNodes, lastSelection, completed] = await this.registry.getFormingCluster();
+        const [selectedNodes, lastSelection] = await this.registry.getFormingCluster();
+      const completed = selectedNodes.length === 11;
         const clusterCount = 0; // getActiveClusterCount removed from new contract
         const selectedCount = selectedNodes.length;
         const isSelected = selectedNodes.map(a => a.toLowerCase()).includes(this.wallet.address.toLowerCase());
