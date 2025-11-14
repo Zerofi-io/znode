@@ -675,19 +675,19 @@ class ZNode {
         // Auto-cleanup stale clusters
         await this.cleanupStaleCluster();
 
-        // Attempt to trigger selection if conditions met and data not stale
-        const canSelectNow = (selectedCount < 11) && ((Number(queueLen) + selectedCount) >= 11);
-        if (canSelectNow) console.log('DEBUG: Attempting selection (queue=%d, selected=%d)', queueLen, selectedCount);
-        if (canSelectNow) {
-          try {
-            const tx = await this.registry.selectNextNode();
-            await tx.wait();
-            console.log(`Triggered selection: ${selectedCount + 1}/11`);
-          } catch (e) {
-            const msg = (e && e.message) ? e.message : String(e);
-            console.log('Selection error:', msg);
-          }
-        }
+        // DISABLED:         // Attempt to trigger selection if conditions met and data not stale
+        // DISABLED:         const canSelectNow = (selectedCount < 11) && ((Number(queueLen) + selectedCount) >= 11);
+        // DISABLED:         if (canSelectNow) console.log('DEBUG: Attempting selection (queue=%d, selected=%d)', queueLen, selectedCount);
+        // DISABLED:         if (canSelectNow) {
+        // DISABLED:           try {
+        // DISABLED:             const tx = await this.registry.selectNextNode();
+        // DISABLED:             await tx.wait();
+        // DISABLED:             console.log(`Triggered selection: ${selectedCount + 1}/11`);
+        // DISABLED:           } catch (e) {
+        // DISABLED:             const msg = (e && e.message) ? e.message : String(e);
+        // DISABLED:             console.log('Selection error:', msg);
+        // DISABLED:           }
+        // DISABLED:         }
 
         if (stale && selectedCount > 0) {
           const ageMin = Math.floor(ageMs / 60000);
