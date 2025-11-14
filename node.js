@@ -282,7 +282,6 @@ class ZNode {
       console.log(`✓ Multisig created locally: ${addr}`);
       // Submit to registry
       const tx = await this.registry.submitMultisigAddress(clusterId, addr);
-      'function confirmCluster(string moneroAddress) external',
       await tx.wait();
       console.log('✓ Submitted multisig address to registry');
       
