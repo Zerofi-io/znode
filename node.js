@@ -323,6 +323,71 @@ class ZNode {
     }
   }
 
+  async cleanupStaleCluster() {
+    try {
+      const [selectedNodes, lastSelection, completed] = await this.registry.getFormingCluster();
+      if (!completed || selectedNodes.length !== 11) {
+        this._staleClusterStart = null;
+        return false;
+      }
+      let clusterId = null;
+      try {
+        const [idx] = await this.registry.currentFormingCluster();
+        clusterId = await this.registry.allClusters(idx);
+      } catch {
+        try { clusterId = await this.registry.getDepositCluster(); } catch {}
+      }
+      if (clusterId) {
+        this._staleClusterStart = null;
+        return false;
+      }
+      const now = Date.now();
+      const lastSelMs = Number(lastSelection) * 1000;
+      const ageMs = now - lastSelMs;
+      if (!this._staleClusterStart) {
+        this._staleClusterStart = now;
+        console.log(`⚠️  Stale cluster detected (age: ${Math.floor(ageMs/60000)}m). Starting cleanup timer...`);
+        return false;
+      }
+      const staleDuration = now - this._staleClusterStart;
+      if (staleDuration > 10 * 60 * 1000) {
+        console.log(`🧹 Auto-cleanup: cluster stale for ${Math.floor(staleDuration/60000)}m. Resetting...`);
+        const jitter = Math.floor(Math.random() * 30000);
+        await new Promise(r => setTimeout(r, jitter));
+        try {
+          const tx1 = await this.registry.deregisterNode();
+          await tx1.wait();
+          console.log("✓ Deregistered from stale cluster");
+        } catch (e) {
+          console.log("Deregister failed:", e.message);
+        }
+        await new Promise(r => setTimeout(r, 2000));
+        if (!this.multisigInfo) {
+          try { await this.prepareMultisig(); } catch {}
+        }
+        const codeHash = ethers.id("znode-v2-tss");
+        try {
+          const tx2 = await this.registry.registerNode(codeHash, this.multisigInfo || "");
+          await tx2.wait();
+          console.log("✓ Re-registered to fresh queue");
+        } catch (e) {
+          console.log("Re-register failed:", e.message);
+        }
+        this._staleClusterStart = null;
+        return true;
+      } else {
+        const remaining = Math.ceil((10 * 60 * 1000 - staleDuration) / 60000);
+        if (staleDuration % 120000 < 15000) {
+          console.log(`⏳ Stale cluster: ${remaining}m until auto-cleanup`);
+        }
+        return false;
+      }
+    } catch (e) {
+      console.log("Cleanup check error:", e.message);
+      return false;
+    }
+  }
+
 
   async monitorNetwork() {
     console.log('→ Monitoring network...');
@@ -344,6 +409,8 @@ class ZNode {
         const shownSelected = stale ? 0 : selectedCount;
         console.log(`Queue: ${queueLen} | Selected: ${shownSelected}/11 | Clusters: ${clusterCount} | CanRegister: ${canRegister} | Completed: ${completed}`);
         // DISABLED:         await this.requeueIfStale({ queueLen, selectedNodes, lastSelection, completed, canRegister });
+        // Auto-cleanup stale clusters
+        await this.cleanupStaleCluster();
 
         // Attempt to trigger selection if conditions met and data not stale
         const canSelectNow = (selectedCount < 11) && ((Number(queueLen) + selectedCount) >= 11);
