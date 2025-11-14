@@ -345,9 +345,13 @@ class ZNode {
       const lastSelMs = Number(lastSelection) * 1000;
       const ageMs = now - lastSelMs;
       if (!this._staleClusterStart) {
-        this._staleClusterStart = now;
-        console.log(`⚠️  Stale cluster detected (age: ${Math.floor(ageMs/60000)}m). Starting cleanup timer...`);
-        return false;
+        // If cluster already >10m old, trigger cleanup immediately; otherwise start timer
+        if (ageMs > 10 * 60 * 1000) {
+          this._staleClusterStart = now - (10 * 60 * 1000 + 1000); // backdated to trigger now
+        } else {
+          this._staleClusterStart = now;
+        }
+        console.log(`⚠️  Stale cluster detected (age: ${Math.floor(ageMs/60000)}m). ${ageMs > 10*60*1000 ? 'Triggering cleanup...' : 'Starting cleanup timer...'}`);
       }
       const staleDuration = now - this._staleClusterStart;
       if (staleDuration > 10 * 60 * 1000) {
