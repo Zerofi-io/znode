@@ -685,14 +685,7 @@ class ZNode {
 
       try {
         // First, try clearing the forming cluster based on stale time
-        try {
-          const tx1 = await this.registry.clearStaleCluster();
-          await tx1.wait();
-          console.log('✓ clearStaleCluster() called to clear stale forming cluster');
-        } catch (e) {
-          const msg = (e && e.message) ? e.message : String(e);
-          console.log('clearStaleCluster() call failed or had no effect:', msg);
-        }
+        // clearStaleCluster removed - causes revert spam when no stale cluster
 
         // If multisig setup is stuck (not enough address submissions), trigger setup timeout logic
         if (clusterIdForCleanup) {
@@ -741,7 +734,7 @@ class ZNode {
       try {
         const [queueLen, , canRegister] = await this.registry.getQueueStatus();
         const [selectedNodes, lastSelection, completed] = await this.registry.getFormingCluster();
-        const clusterCount = await this.registry.getActiveClusterCount();
+        const clusterCount = 0; // getActiveClusterCount removed from new contract
         const selectedCount = selectedNodes.length;
         const isSelected = selectedNodes.map(a => a.toLowerCase()).includes(this.wallet.address.toLowerCase());
         const lastSelMs = Number(lastSelection) * 1000;
