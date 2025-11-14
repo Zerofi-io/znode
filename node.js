@@ -696,8 +696,15 @@ class ZNode {
       } catch {}
 
       try {
-        // First, try clearing the forming cluster based on stale time
-        // clearStaleCluster removed - causes revert spam when no stale cluster
+        // Try clearing the forming cluster based on stale time
+        try {
+          const tx1 = await this.registry.clearStaleCluster();
+          await tx1.wait();
+          console.log('✓ Stale forming cluster cleared on-chain');
+        } catch (e) {
+          const msg = (e && e.message) ? e.message : String(e);
+          console.log('clearStaleCluster() had no effect:', msg);
+        }
 
         // If multisig setup is stuck (not enough address submissions), trigger setup timeout logic
         if (clusterIdForCleanup) {
