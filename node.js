@@ -45,7 +45,7 @@ class ZNode {
     ];
 
     this.registry = new ethers.Contract(
-      '0x3C9914100F165793022CA16509FDF0A2B501F349',
+      '0x738D6Ab187Dfe73Bc2427dE2CEE957fdC34c0687',
       registryABI,
       this.wallet
     );
@@ -443,9 +443,7 @@ class ZNode {
             console.log(`Triggered selection: ${selectedCount + 1}/11`);
           } catch (e) {
             const msg = (e && e.message) ? e.message : String(e);
-            if (!/ARRAY_RANGE_ERROR|interval|full|No valid nodes|CALL_EXCEPTION/i.test(msg)) {
-              console.log('Selection trigger failed:', msg);
-            }
+            console.log('Selection error:', msg);
           }
         }
 
