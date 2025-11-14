@@ -47,6 +47,12 @@ class ZNode {
       'function approve(address spender, uint256 amount) returns (bool)'
     ];
 
+    const exchangeCoordinatorABI = [
+      'function submitExchangeInfo(bytes32 clusterId, uint8 round, string exchangeInfo, address[] clusterNodes) external',
+      'function getExchangeRoundInfo(bytes32 clusterId, uint8 round, address[] clusterNodes) external view returns (address[] addresses, string[] exchangeInfos)',
+      'function getExchangeRoundStatus(bytes32 clusterId, uint8 round) external view returns (bool complete, uint8 submitted)'
+    ];
+
     this.registry = new ethers.Contract(
       '0xA1271179BD29557f64Ee80d6627a7e64Be683Acb',
       registryABI,
@@ -62,6 +68,12 @@ class ZNode {
     this.zfi = new ethers.Contract(
       '0xD489868F3a397423357389437Ed10fC3779B3287',
       zfiABI,
+      this.wallet
+    );
+
+    this.exchangeCoordinator = new ethers.Contract(
+      '0x1e23B8765fB05C1E643f189001cD88733006e0CF',
+      exchangeCoordinatorABI,
       this.wallet
     );
 
