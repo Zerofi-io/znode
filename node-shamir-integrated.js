@@ -48,19 +48,19 @@ class ZNode {
 
     // Contract addresses - WILL BE UPDATED AFTER DEPLOYMENT
     this.registry = new ethers.Contract(
-      '0x26B59a70B59Bf486D4cEFa292d8BfC80f1E0F636', // TODO: Update with new Shamir contract
+      '0xbCBCAA233c05b2Fc02cf9A9aa2Ce500F645895E2', // TODO: Update with new Shamir contract
       registryABI,
       this.wallet
     );
 
     this.staking = new ethers.Contract(
-      '0x10b0F517b8eb9b275924e097Af6B1b1eb85182f0',
+      '0xc4D4dB2f5Ea4D2AE57C07D95E71Dee71D660E85c',
       stakingABI,
       this.wallet
     );
 
     this.zfi = new ethers.Contract(
-      '0xAa15b1F362315B09B19Ab5D5274D1CDD59588F96',
+      '0xf019C66DAB47Cc8EfBE10EF1DCCa18E45CF2427d',
       zfiABI,
       this.wallet
     );
