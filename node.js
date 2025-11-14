@@ -490,9 +490,10 @@ class ZNode {
         // Clean up cluster-specific wallet if it exists
         if (this.clusterWalletName) {
           try {
-            const walletPath = `~/.monero-wallets/${this.clusterWalletName}*`;
+            const { execSync } = require('child_process');
+            const walletPattern = `~/.monero-wallets/${this.clusterWalletName}*`;
             console.log(`🗑️  Removing stale cluster wallet: ${this.clusterWalletName}`);
-            // Note: Actual file deletion would need shell command or fs operations
+            execSync(`rm -f ${walletPattern}`, { stdio: 'ignore' });
           } catch (e) {
             // Ignore cleanup errors
           }
