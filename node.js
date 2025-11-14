@@ -198,7 +198,8 @@ class ZNode {
     try {
       const result = await this.monero.call('make_multisig', {
         multisig_info: multisigInfos,
-        threshold: threshold
+        threshold: threshold,
+        password: this.moneroPassword
       });
       
       console.log('✓ Multisig wallet created');
