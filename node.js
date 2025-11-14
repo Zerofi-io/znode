@@ -414,7 +414,7 @@ class ZNode {
       this._lastCleanupAttempt = now;
 
       console.log(`🧹 Auto-cleanup: cluster stale for ${Math.floor(staleDuration/60000)}m. ` +
-                  'Attempting dummy finalization from this node...');
+                  'Requesting on-chain stale cleanup from this node...');
 
       // Re-check that a stale forming cluster still exists before sending tx
       const [selectedNodes2, lastSelection2, completed2] = await this.registry.getFormingCluster();
@@ -424,13 +424,39 @@ class ZNode {
         return false;
       }
 
+      // Compute the real clusterId using the same encoding as the registry
+      let clusterIdForCleanup = null;
       try {
-        // Submit a dummy/emergency multisig address to finalize and clear the cluster
-        const dummyClusterId = ethers.keccak256(ethers.toUtf8Bytes('stale-cluster-' + Date.now()));
-        const dummyAddress = '0x0000000000000000000000000000000000000001'; // burn address
-        const tx = await this.registry.submitMultisigAddress(dummyClusterId, dummyAddress);
-        await tx.wait();
-        console.log('✓ Dummy finalization submitted to clear stale cluster');
+        const clusterNodes2 = selectedNodes2.map(a => a.toLowerCase());
+        if (clusterNodes2.length === 11) {
+          clusterIdForCleanup = ethers.keccak256(
+            ethers.AbiCoder.defaultAbiCoder().encode(['address[11]'], [clusterNodes2])
+          );
+        }
+      } catch {}
+
+      try {
+        // First, try clearing the forming cluster based on stale time
+        try {
+          const tx1 = await this.registry.clearStaleCluster();
+          await tx1.wait();
+          console.log('✓ clearStaleCluster() called to clear stale forming cluster');
+        } catch (e) {
+          const msg = (e && e.message) ? e.message : String(e);
+          console.log('clearStaleCluster() call failed or had no effect:', msg);
+        }
+
+        // If multisig setup is stuck (not enough address submissions), trigger setup timeout logic
+        if (clusterIdForCleanup) {
+          try {
+            const tx2 = await this.registry.checkMultisigTimeout(clusterIdForCleanup);
+            await tx2.wait();
+            console.log('✓ checkMultisigTimeout() called for clusterId', clusterIdForCleanup);
+          } catch (e) {
+            const msg = (e && e.message) ? e.message : String(e);
+            console.log('checkMultisigTimeout() call failed or had no effect:', msg);
+          }
+        }
 
         // Clean up cluster-specific wallet if it exists
         if (this.clusterWalletName) {
@@ -447,7 +473,7 @@ class ZNode {
         this._staleClusterStart = null;
         return true;
       } catch (e) {
-        console.log('Dummy finalization failed:', e.message);
+        console.log('Cleanup transaction sequence failed:', e.message || String(e));
         return false;
       }
     } catch (e) {
@@ -507,10 +533,14 @@ class ZNode {
           try {
             let clusterId = null;
             try {
-              // Compute clusterId from sorted selected nodes (standard pattern)
-              const sortedAddrs = selectedNodes.map(a => a.toLowerCase()).sort();
-              clusterId = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['address[]'], [sortedAddrs]));
-              console.log('Computed clusterId:', clusterId);
+              // Compute clusterId exactly as in ClusterRegistry: keccak256(abi.encodePacked(address[11]))
+              const clusterNodes = selectedNodes.map(a => a.toLowerCase());
+              if (clusterNodes.length === 11) {
+                clusterId = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['address[11]'], [clusterNodes]));
+                console.log('Computed clusterId:', clusterId);
+              } else {
+                console.log('ClusterId computation skipped: expected 11 nodes, got', clusterNodes.length);
+              }
             } catch (e) {
               console.log('ClusterId computation failed:', e.message);
             }
