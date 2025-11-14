@@ -322,7 +322,6 @@ class ZNode {
     }
   }
 
-  }
 
   async monitorNetwork() {
     console.log('→ Monitoring network...');
