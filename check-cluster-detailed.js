@@ -9,7 +9,7 @@ const registryABI = [
 async function main() {
   const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
   const registry = new ethers.Contract(
-    "0xa9e154A1245bae6E3cD2f31A46C1C16277AbF974",
+    "0x4A85418A95F178675F6E43C2023dc371a5EdFdc8",
     registryABI,
     provider
   );

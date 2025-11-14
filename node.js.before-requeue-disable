@@ -27,8 +27,6 @@ class ZNode {
       'function getQueueStatus() external view returns (uint256, uint256, bool)',
       'function getFormingCluster() external view returns (address[] memory, uint256, bool)',
       'function getActiveClusterCount() external view returns (uint256)',
-      'function clearStaleCluster() external',
-      'function checkMultisigTimeout(bytes32 clusterId) external',
       'function registeredNodes(address) view returns (bool registered, bytes32 codeHash, string multisigInfo, uint256 registeredAt, bool inQueue, uint256 multisigSubmittedBlock)',
       'event NodeRegistered(address indexed node)',
       'event ClusterFormed(bytes32 indexed clusterId, address[] members)'
@@ -47,19 +45,19 @@ class ZNode {
     ];
 
     this.registry = new ethers.Contract(
-      '0x4A85418A95F178675F6E43C2023dc371a5EdFdc8',
+      '0xC35CC6a4176dB55dbb290EDbEbae5A08BE5c6c8d',
       registryABI,
       this.wallet
     );
 
     this.staking = new ethers.Contract(
-      '0xA38b1E28A67357D7De596472B1CC3daFf78478A2',
+      '0x4292E4Af84cea07D2654CB5D97141C7D6a23be01',
       stakingABI,
       this.wallet
     );
 
     this.zfi = new ethers.Contract(
-      '0x8E94693CC23b75EE33fd7f8D18B1Db339271C202',
+      '0x1736668a18AE7C46011dF93A12a6b9438174814F',
       zfiABI,
       this.wallet
     );
@@ -68,8 +66,7 @@ class ZNode {
       url: process.env.MONERO_RPC_URL || 'http://127.0.0.1:18083'
     });
 
-    this.baseWalletName = `znode_${this.wallet.address.slice(2, 10)}`;
-    this.clusterWalletName = null; // Set when joining a cluster
+    this.walletName = `znode_${this.wallet.address.slice(2, 10)}`;
     this.multisigInfo = null;
     this.clusterId = null;
   }
@@ -118,11 +115,10 @@ class ZNode {
       }
 
       // Approve if needed
-      const stakingAddr = await this.staking.getAddress();
-      const allowance = await this.zfi.allowance(this.wallet.address, stakingAddr);
+      const allowance = await this.zfi.allowance(this.wallet.address, '0x4292E4Af84cea07D2654CB5D97141C7D6a23be01');
       if (allowance < required) {
         console.log('  Approving ZFI for staking...');
-        const txA = await this.zfi.approve(stakingAddr, required);
+        const txA = await this.zfi.approve('0x4292E4Af84cea07D2654CB5D97141C7D6a23be01', required);
         await txA.wait();
         console.log('  ✓ Approved');
       }
@@ -144,8 +140,8 @@ class ZNode {
     
     for (let i = 1; i <= 20; i++) {
       try {
-        await this.monero.openWallet(this.baseWalletName, this.moneroPassword);
-        console.log(`✓ Base wallet opened: ${this.baseWalletName}`);
+        await this.monero.openWallet(this.walletName, this.moneroPassword);
+        console.log(`✓ Wallet opened: ${this.walletName}`);
         break;
       } catch (error) {
         if (error.code === 'ECONNREFUSED' && i < 10) {
@@ -159,8 +155,8 @@ class ZNode {
         }
         
         console.log('  Creating wallet with password...');
-        await this.monero.createWallet(this.baseWalletName, this.moneroPassword);
-        console.log(`✓ Base wallet created: ${this.baseWalletName}`);
+        await this.monero.createWallet(this.walletName, this.moneroPassword);
+        console.log(`✓ Wallet created: ${this.walletName}`);
         break;
       }
     }
@@ -191,26 +187,6 @@ class ZNode {
       
       return this.multisigInfo;
     } catch (error) {
-      // If wallet is already multisig from previous deployment, recreate it
-      if (error.message && error.message.includes('already multisig')) {
-        console.log('  Wallet is already multisig from old deployment. Recreating...');
-        try {
-          await this.monero.closeWallet();
-          await new Promise(r => setTimeout(r, 500));
-          // Delete and recreate
-          await this.monero.createWallet(this.baseWalletName, this.moneroPassword);
-          console.log('  ✓ Wallet recreated');
-          // Now try prepare_multisig again
-          const result = await this.monero.call('prepare_multisig');
-          this.multisigInfo = result.multisig_info;
-          console.log('✓ Multisig info generated');
-          console.log(`  Info: ${this.multisigInfo.substring(0, 50)}...`);
-          return this.multisigInfo;
-        } catch (e) {
-          console.error('❌ Failed to recreate wallet:', e.message);
-          throw e;
-        }
-      }
       console.error('❌ prepare_multisig failed:', error.message);
       throw error;
     }
@@ -222,8 +198,7 @@ class ZNode {
     try {
       const result = await this.monero.call('make_multisig', {
         multisig_info: multisigInfos,
-        threshold: threshold,
-        password: this.moneroPassword
+        threshold: threshold
       });
       
       console.log('✓ Multisig wallet created');
@@ -236,7 +211,7 @@ class ZNode {
     }
   }
 
-  async finalizeClusterWithMultisigCoordination(clusterId) {
+  async finalizeClusterWithMultisigCoordination() {
     try {
       // Fetch forming cluster multisig info list (addresses aligned to selectedAddrs)
       const [addrList, infoList] = await this.registry.getFormingClusterMultisigInfo();
@@ -252,20 +227,7 @@ class ZNode {
         console.log(`Not enough multisig infos yet (${peers.length}+1). Waiting...`);
         return false;
       }
-      // Create cluster-specific multisig wallet
-      this.clusterWalletName = `${this.baseWalletName}_cluster_${clusterId.slice(2, 10)}`;
-      console.log(`Creating cluster wallet: ${this.clusterWalletName}`);
-      
-      try {
-        await this.monero.createWallet(this.clusterWalletName, this.moneroPassword);
-        console.log('✓ Cluster wallet created');
-      } catch (e) {
-        // Wallet might exist from previous attempt - open it
-        await this.monero.openWallet(this.clusterWalletName, this.moneroPassword);
-        console.log('✓ Cluster wallet opened');
-      }
-      
-      // Create 8-of-11 multisig in the cluster wallet
+      // Create 8-of-11 multisig locally
       const res = await this.makeMultisig(8, peers);
       const addr = res.address;
       console.log(`✓ Multisig created locally: ${addr}`);
@@ -361,150 +323,6 @@ class ZNode {
     }
   }
 
-  async cleanupStaleCluster() {
-    try {
-      const [selectedNodes, lastSelection, completed] = await this.registry.getFormingCluster();
-      // Only clean up a fully-selected, completed forming cluster that never produced a real cluster
-      if (!completed || selectedNodes.length !== 11) {
-        this._staleClusterStart = null;
-        return false;
-      }
-      let clusterId = null;
-      try {
-        const [idx] = await this.registry.currentFormingCluster();
-        clusterId = await this.registry.allClusters(idx);
-      } catch {
-        try { clusterId = await this.registry.getDepositCluster(); } catch {}
-      }
-      if (clusterId) {
-        // A real cluster exists; nothing to clean up
-        this._staleClusterStart = null;
-        return false;
-      }
-
-      const now = Date.now();
-      const lastSelMs = Number(lastSelection) * 1000;
-      const ageMs = now - lastSelMs;
-
-      // Initialize stale tracking and per-node jitter the first time we notice this stale cluster
-      if (!this._staleClusterStart) {
-        // If cluster already >10m old, trigger base cleanup window immediately; otherwise start timer now
-        if (ageMs > 10 * 60 * 1000) {
-          this._staleClusterStart = now - (10 * 60 * 1000 + 1000); // backdated to trigger now
-        } else {
-          this._staleClusterStart = now;
-        }
-
-        // Deterministic jitter per node to avoid all nodes attempting cleanup at once
-        const JITTER_WINDOW_MS = 5 * 60 * 1000; // spread attempts over 5 minutes
-        try {
-          const addrHex = this.wallet.address.toLowerCase().replace('0x', '') || '1';
-          const addrNum = BigInt('0x' + addrHex);
-          this._cleanupJitterMs = Number(addrNum % BigInt(JITTER_WINDOW_MS));
-        } catch {
-          // Fallback to pseudo-random jitter if BigInt parsing fails for some reason
-          this._cleanupJitterMs = Math.floor(Math.random() * JITTER_WINDOW_MS);
-        }
-        this._lastCleanupAttempt = 0;
-
-        const baseDelay = 10 * 60 * 1000; // minimum stale time before any cleanup attempt
-        const jitter = this._cleanupJitterMs || 0;
-        const totalDelayMin = Math.ceil((baseDelay + jitter) / 60000);
-        const jitterMin = Math.floor(jitter / 60000);
-        console.log(`⚠️  Stale cluster detected (age: ${Math.floor(ageMs/60000)}m). ` +
-                    `${ageMs > 10*60*1000 ? 'Triggering cleanup window...' : 'Starting cleanup timer with jitter...'}`);
-        console.log(`🕒 This node will attempt stale cleanup in ~${totalDelayMin}m (base=10m + jitter≈${jitterMin}m).`);
-      }
-
-      const staleDuration = now - this._staleClusterStart;
-      const baseDelay = 10 * 60 * 1000; // minimum stale time before any cleanup attempt
-      const jitter = this._cleanupJitterMs || 0;
-      const effectiveDelay = baseDelay + jitter;
-
-      // Not yet time for this node to attempt cleanup
-      if (staleDuration < effectiveDelay) {
-        const remaining = Math.ceil((effectiveDelay - staleDuration) / 60000);
-        if (staleDuration % 120000 < 15000) {
-          console.log(`⏳ Stale cluster: ${remaining}m (including jitter) until this node attempts auto-cleanup`);
-        }
-        return false;
-      }
-
-      // Prevent constant retries - only attempt once per 5 minutes per node
-      if (this._lastCleanupAttempt && (now - this._lastCleanupAttempt) < 5 * 60 * 1000) {
-        return false;
-      }
-      this._lastCleanupAttempt = now;
-
-      console.log(`🧹 Auto-cleanup: cluster stale for ${Math.floor(staleDuration/60000)}m. ` +
-                  'Requesting on-chain stale cleanup from this node...');
-
-      // Re-check that a stale forming cluster still exists before sending tx
-      const [selectedNodes2, lastSelection2, completed2] = await this.registry.getFormingCluster();
-      if (!completed2 || selectedNodes2.length !== 11 || String(lastSelection2) !== String(lastSelection)) {
-        console.log('Cleanup aborted: forming cluster changed while waiting.');
-        this._staleClusterStart = null;
-        return false;
-      }
-
-      // Compute the real clusterId using the same encoding as the registry
-      let clusterIdForCleanup = null;
-      try {
-        const clusterNodes2 = selectedNodes2.map(a => a.toLowerCase());
-        if (clusterNodes2.length === 11) {
-          clusterIdForCleanup = ethers.keccak256(
-            ethers.solidityPacked(['address[11]'], [clusterNodes2])
-          );
-        }
-      } catch {}
-
-      try {
-        // First, try clearing the forming cluster based on stale time
-        try {
-          const tx1 = await this.registry.clearStaleCluster();
-          await tx1.wait();
-          console.log('✓ clearStaleCluster() called to clear stale forming cluster');
-        } catch (e) {
-          const msg = (e && e.message) ? e.message : String(e);
-          console.log('clearStaleCluster() call failed or had no effect:', msg);
-        }
-
-        // If multisig setup is stuck (not enough address submissions), trigger setup timeout logic
-        if (clusterIdForCleanup) {
-          try {
-            const tx2 = await this.registry.checkMultisigTimeout(clusterIdForCleanup);
-            await tx2.wait();
-            console.log('✓ checkMultisigTimeout() called for clusterId', clusterIdForCleanup);
-          } catch (e) {
-            const msg = (e && e.message) ? e.message : String(e);
-            console.log('checkMultisigTimeout() call failed or had no effect:', msg);
-          }
-        }
-
-        // Clean up cluster-specific wallet if it exists
-        if (this.clusterWalletName) {
-          try {
-            const walletPath = `~/.monero-wallets/${this.clusterWalletName}*`;
-            console.log(`🗑️  Removing stale cluster wallet: ${this.clusterWalletName}`);
-            // Note: Actual file deletion would need shell command or fs operations
-          } catch (e) {
-            // Ignore cleanup errors
-          }
-          this.clusterWalletName = null;
-        }
-
-        this._staleClusterStart = null;
-        return true;
-      } catch (e) {
-        console.log('Cleanup transaction sequence failed:', e.message || String(e));
-        return false;
-      }
-    } catch (e) {
-      console.log("Cleanup check error:", e.message);
-      return false;
-    }
-  }
-
 
   async monitorNetwork() {
     console.log('→ Monitoring network...');
@@ -525,13 +343,10 @@ class ZNode {
         
         const shownSelected = stale ? 0 : selectedCount;
         console.log(`Queue: ${queueLen} | Selected: ${shownSelected}/11 | Clusters: ${clusterCount} | CanRegister: ${canRegister} | Completed: ${completed}`);
-        // DISABLED:         await this.requeueIfStale({ queueLen, selectedNodes, lastSelection, completed, canRegister });
-        // Auto-cleanup stale clusters
-        await this.cleanupStaleCluster();
+        await this.requeueIfStale({ queueLen, selectedNodes, lastSelection, completed, canRegister });
 
         // Attempt to trigger selection if conditions met and data not stale
         const canSelectNow = (selectedCount < 11) && ((Number(queueLen) + selectedCount) >= 11);
-        if (canSelectNow) console.log('DEBUG: Attempting selection (queue=%d, selected=%d)', queueLen, selectedCount);
         if (canSelectNow) {
           try {
             const tx = await this.registry.selectNextNode();
@@ -539,7 +354,9 @@ class ZNode {
             console.log(`Triggered selection: ${selectedCount + 1}/11`);
           } catch (e) {
             const msg = (e && e.message) ? e.message : String(e);
-            console.log('Selection error:', msg);
+            if (!/ARRAY_RANGE_ERROR|interval|full|No valid nodes|CALL_EXCEPTION/i.test(msg)) {
+              console.log('Selection trigger failed:', msg);
+            }
           }
         }
 
@@ -556,18 +373,14 @@ class ZNode {
           try {
             let clusterId = null;
             try {
-              // Compute clusterId exactly as in ClusterRegistry: keccak256(abi.encodePacked(address[11]))
-              const clusterNodes = selectedNodes.map(a => a.toLowerCase());
-              if (clusterNodes.length === 11) {
-                clusterId = ethers.keccak256(
-                  ethers.solidityPacked(['address[11]'], [clusterNodes])
-                );
-                console.log('Computed clusterId:', clusterId);
-              } else {
-                console.log('ClusterId computation skipped: expected 11 nodes, got', clusterNodes.length);
+              const [idx, last, done] = await this.registry.currentFormingCluster();
+              clusterId = await this.registry.allClusters(idx);
+            } catch (e1) {
+              try {
+                clusterId = await this.registry.getDepositCluster();
+              } catch (e2) {
+                if (selectedNodes.length === 11) console.log('Finalize check: could not determine clusterId yet');
               }
-            } catch (e) {
-              console.log('ClusterId computation failed:', e.message);
             }
             if (clusterId) {
               const myIndex = selectedNodes.map(a => a.toLowerCase()).indexOf(this.wallet.address.toLowerCase());
@@ -580,10 +393,9 @@ class ZNode {
                   seed = BigInt('0x' + (hex.slice(0,16) || '1'));
                 }
                 const coordIndex = Number(seed % 11n);
-                console.log('DEBUG: myIndex=%d coordIndex=%d myAddr=%s', myIndex, coordIndex, this.wallet.address);
                 if (myIndex === coordIndex) {
                   console.log('🎯 I am the coordinator for this cluster. Finalizing...');
-                  await this.finalizeClusterWithMultisigCoordination(clusterId);
+                  await this.finalizeClusterWithMultisigCoordination();
                 } else {
                   console.log('⏳ Waiting for coordinator to finalize cluster...');
                 }
