@@ -54,25 +54,25 @@ class ZNode {
     ];
 
     this.registry = new ethers.Contract(
-      '0xA1271179BD29557f64Ee80d6627a7e64Be683Acb',
+      '0xad2F94104F38210625F2022883482De774c51d84',
       registryABI,
       this.wallet
     );
 
     this.staking = new ethers.Contract(
-      '0x3b6f6F31C8C4E32743b976e013d838cE3215b244',
+      '0x287Ae2697B58e2f63B27426A97287df769b121e9',
       stakingABI,
       this.wallet
     );
 
     this.zfi = new ethers.Contract(
-      '0xD489868F3a397423357389437Ed10fC3779B3287',
+      '0x43fAC64A8B016aE4CC26E36e4ebe2b8B6A51109a',
       zfiABI,
       this.wallet
     );
 
     this.exchangeCoordinator = new ethers.Contract(
-      '0x1e23B8765fB05C1E643f189001cD88733006e0CF',
+      '0xdA258736a8F3ED30CE2Ba150Ba65076cE9919C7E',
       exchangeCoordinatorABI,
       this.wallet
     );
@@ -671,23 +671,23 @@ class ZNode {
         
         const shownSelected = stale ? 0 : selectedCount;
         console.log(`Queue: ${queueLen} | Selected: ${shownSelected}/11 | Clusters: ${clusterCount} | CanRegister: ${canRegister} | Completed: ${completed}`);
-        // DISABLED:         await this.requeueIfStale({ queueLen, selectedNodes, lastSelection, completed, canRegister });
+                await this.requeueIfStale({ queueLen, selectedNodes, lastSelection, completed, canRegister });
         // Auto-cleanup stale clusters
         await this.cleanupStaleCluster();
 
-        // DISABLED:         // Attempt to trigger selection if conditions met and data not stale
-        // DISABLED:         const canSelectNow = (selectedCount < 11) && ((Number(queueLen) + selectedCount) >= 11);
-        // DISABLED:         if (canSelectNow) console.log('DEBUG: Attempting selection (queue=%d, selected=%d)', queueLen, selectedCount);
-        // DISABLED:         if (canSelectNow) {
-        // DISABLED:           try {
-        // DISABLED:             const tx = await this.registry.selectNextNode();
-        // DISABLED:             await tx.wait();
-        // DISABLED:             console.log(`Triggered selection: ${selectedCount + 1}/11`);
-        // DISABLED:           } catch (e) {
-        // DISABLED:             const msg = (e && e.message) ? e.message : String(e);
-        // DISABLED:             console.log('Selection error:', msg);
-        // DISABLED:           }
-        // DISABLED:         }
+                // Attempt to trigger selection if conditions met and data not stale
+                const canSelectNow = (selectedCount < 11) && ((Number(queueLen) + selectedCount) >= 11);
+                if (canSelectNow) console.log('DEBUG: Attempting selection (queue=%d, selected=%d)', queueLen, selectedCount);
+                if (canSelectNow) {
+                  try {
+                    const tx = await this.registry.selectNextNode();
+                    await tx.wait();
+                    console.log(`Triggered selection: ${selectedCount + 1}/11`);
+                  } catch (e) {
+                    const msg = (e && e.message) ? e.message : String(e);
+                    console.log('Selection error:', msg);
+                  }
+                }
 
         if (stale && selectedCount > 0) {
           const ageMin = Math.floor(ageMs / 60000);
