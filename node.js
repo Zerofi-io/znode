@@ -341,6 +341,7 @@ class ZNode {
   async cleanupStaleCluster() {
     try {
       const [selectedNodes, lastSelection, completed] = await this.registry.getFormingCluster();
+      // Only clean up a fully-selected, completed forming cluster that never produced a real cluster
       if (!completed || selectedNodes.length !== 11) {
         this._staleClusterStart = null;
         return false;
@@ -353,52 +354,85 @@ class ZNode {
         try { clusterId = await this.registry.getDepositCluster(); } catch {}
       }
       if (clusterId) {
+        // A real cluster exists; nothing to clean up
         this._staleClusterStart = null;
         return false;
       }
+
       const now = Date.now();
       const lastSelMs = Number(lastSelection) * 1000;
       const ageMs = now - lastSelMs;
+
+      // Initialize stale tracking and per-node jitter the first time we notice this stale cluster
       if (!this._staleClusterStart) {
-        // If cluster already >10m old, trigger cleanup immediately; otherwise start timer
+        // If cluster already >10m old, trigger base cleanup window immediately; otherwise start timer now
         if (ageMs > 10 * 60 * 1000) {
           this._staleClusterStart = now - (10 * 60 * 1000 + 1000); // backdated to trigger now
         } else {
           this._staleClusterStart = now;
         }
-        console.log(`⚠️  Stale cluster detected (age: ${Math.floor(ageMs/60000)}m). ${ageMs > 10*60*1000 ? 'Triggering cleanup...' : 'Starting cleanup timer...'}`);
-      }
-      const staleDuration = now - this._staleClusterStart;
-      if (staleDuration > 10 * 60 * 1000) {
-        // Prevent constant retries - only attempt once per 5 minutes
-        if (this._lastCleanupAttempt && (now - this._lastCleanupAttempt) < 5 * 60 * 1000) {
-          return false;
-        }
-        this._lastCleanupAttempt = now;
 
-        console.log(`🧹 Auto-cleanup: cluster stale for ${Math.floor(staleDuration/60000)}m. Force-finalizing...`);
-        
-        // Since selected nodes can't deregister, we force-finalize to clear the cluster
-        // Elect deterministic coordinator based on selected nodes
-        const [selectedNodes] = await this.registry.getFormingCluster();
-        const myAddr = this.wallet.address.toLowerCase();
-        const myIndex = selectedNodes.map(a => a.toLowerCase()).indexOf(myAddr);
-        
-        if (myIndex >= 0) {
-          // Use hash of first selected address as seed for coordinator election
-          const seed = BigInt(selectedNodes[0]);
-          const coordIndex = Number(seed % BigInt(selectedNodes.length));
-          
-          if (myIndex === coordIndex) {
-            console.log('🎯 I am cleanup coordinator. Submitting dummy finalization...');
-            try {
-              // Submit a dummy/emergency multisig address to finalize and clear the cluster
-              const dummyClusterId = ethers.keccak256(ethers.toUtf8Bytes('stale-cluster-' + Date.now()));
-              const dummyAddress = '0x0000000000000000000000000000000000000001'; // burn address
-              const tx = await this.registry.submitMultisigAddress(dummyClusterId, dummyAddress);
-              await tx.wait();
-              console.log('✓ Dummy finalization submitted to clear stale cluster');
-              // Clean up cluster-specific wallet if it exists
+        // Deterministic jitter per node to avoid all nodes attempting cleanup at once
+        const JITTER_WINDOW_MS = 5 * 60 * 1000; // spread attempts over 5 minutes
+        try {
+          const addrHex = this.wallet.address.toLowerCase().replace('0x', '') || '1';
+          const addrNum = BigInt('0x' + addrHex);
+          this._cleanupJitterMs = Number(addrNum % BigInt(JITTER_WINDOW_MS));
+        } catch {
+          // Fallback to pseudo-random jitter if BigInt parsing fails for some reason
+          this._cleanupJitterMs = Math.floor(Math.random() * JITTER_WINDOW_MS);
+        }
+        this._lastCleanupAttempt = 0;
+
+        const baseDelay = 10 * 60 * 1000; // minimum stale time before any cleanup attempt
+        const jitter = this._cleanupJitterMs || 0;
+        const totalDelayMin = Math.ceil((baseDelay + jitter) / 60000);
+        const jitterMin = Math.floor(jitter / 60000);
+        console.log(`⚠️  Stale cluster detected (age: ${Math.floor(ageMs/60000)}m). ` +
+                    `${ageMs > 10*60*1000 ? 'Triggering cleanup window...' : 'Starting cleanup timer with jitter...'}`);
+        console.log(`🕒 This node will attempt stale cleanup in ~${totalDelayMin}m (base=10m + jitter≈${jitterMin}m).`);
+      }
+
+      const staleDuration = now - this._staleClusterStart;
+      const baseDelay = 10 * 60 * 1000; // minimum stale time before any cleanup attempt
+      const jitter = this._cleanupJitterMs || 0;
+      const effectiveDelay = baseDelay + jitter;
+
+      // Not yet time for this node to attempt cleanup
+      if (staleDuration < effectiveDelay) {
+        const remaining = Math.ceil((effectiveDelay - staleDuration) / 60000);
+        if (staleDuration % 120000 < 15000) {
+          console.log(`⏳ Stale cluster: ${remaining}m (including jitter) until this node attempts auto-cleanup`);
+        }
+        return false;
+      }
+
+      // Prevent constant retries - only attempt once per 5 minutes per node
+      if (this._lastCleanupAttempt && (now - this._lastCleanupAttempt) < 5 * 60 * 1000) {
+        return false;
+      }
+      this._lastCleanupAttempt = now;
+
+      console.log(`🧹 Auto-cleanup: cluster stale for ${Math.floor(staleDuration/60000)}m. ` +
+                  'Attempting dummy finalization from this node...');
+
+      // Re-check that a stale forming cluster still exists before sending tx
+      const [selectedNodes2, lastSelection2, completed2] = await this.registry.getFormingCluster();
+      if (!completed2 || selectedNodes2.length !== 11 || String(lastSelection2) !== String(lastSelection)) {
+        console.log('Cleanup aborted: forming cluster changed while waiting.');
+        this._staleClusterStart = null;
+        return false;
+      }
+
+      try {
+        // Submit a dummy/emergency multisig address to finalize and clear the cluster
+        const dummyClusterId = ethers.keccak256(ethers.toUtf8Bytes('stale-cluster-' + Date.now()));
+        const dummyAddress = '0x0000000000000000000000000000000000000001'; // burn address
+        const tx = await this.registry.submitMultisigAddress(dummyClusterId, dummyAddress);
+        await tx.wait();
+        console.log('✓ Dummy finalization submitted to clear stale cluster');
+
+        // Clean up cluster-specific wallet if it exists
         if (this.clusterWalletName) {
           try {
             const walletPath = `~/.monero-wallets/${this.clusterWalletName}*`;
@@ -409,24 +443,11 @@ class ZNode {
           }
           this.clusterWalletName = null;
         }
-        
+
         this._staleClusterStart = null;
-              return true;
-            } catch (e) {
-              console.log('Dummy finalization failed:', e.message);
-            }
-          } else {
-            console.log(`⏳ Waiting for cleanup coordinator (index ${coordIndex}) to finalize...`);
-          }
-        }
-        
-        this._staleClusterStart = null;
-        return false;
-      } else {
-        const remaining = Math.ceil((10 * 60 * 1000 - staleDuration) / 60000);
-        if (staleDuration % 120000 < 15000) {
-          console.log(`⏳ Stale cluster: ${remaining}m until auto-cleanup`);
-        }
+        return true;
+      } catch (e) {
+        console.log('Dummy finalization failed:', e.message);
         return false;
       }
     } catch (e) {
