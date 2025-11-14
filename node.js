@@ -20,9 +20,6 @@ class ZNode {
       'function registerNode(bytes32 codeHash, string multisigInfo) external',
       'function submitMultisigAddress(bytes32 clusterId, string moneroAddress) external',
       'function confirmCluster(string moneroAddress) external',
-      'function submitExchangeInfo(bytes32 clusterId, uint8 round, string exchangeInfo) external',
-      'function getExchangeRoundInfo(bytes32 clusterId, uint8 round) external view returns (address[] addresses, string[] exchangeInfos)',
-      'function getExchangeRoundStatus(bytes32 clusterId, uint8 round) external view returns (bool complete, uint8 submitted)',
       'function getFormingClusterMultisigInfo() external view returns (address[] memory, string[] memory)',
       'function currentFormingCluster() external view returns (uint256, uint256, bool)',
       'function allClusters(uint256) external view returns (bytes32)',
@@ -50,6 +47,9 @@ class ZNode {
       'function approve(address spender, uint256 amount) returns (bool)'
     ];
 
+    const exchangeCoordinatorABI = [
+    ];
+
     this.registry = new ethers.Contract(
       '0xbCBCAA233c05b2Fc02cf9A9aa2Ce500F645895E2',
       registryABI,
@@ -65,6 +65,12 @@ class ZNode {
     this.zfi = new ethers.Contract(
       '0xf019C66DAB47Cc8EfBE10EF1DCCa18E45CF2427d',
       zfiABI,
+      this.wallet
+    );
+
+    this.exchangeCoordinator = new ethers.Contract(
+      '0x9D6DDb5A20F1Abd6CAb63c7545BE69Ac2615E5C4',
+      exchangeCoordinatorABI,
       this.wallet
     );
 
@@ -385,8 +391,11 @@ class ZNode {
       const myInfo = await this.monero.call('export_multisig_info');
       const myExchangeInfo = myInfo.info;
       
-      // Submit my exchange info
-      const submitTx = await this.registry.submitExchangeInfo(clusterId, roundNumber, myExchangeInfo);
+      // Fetch cluster nodes from forming cluster to pass to coordinator
+      const [clusterNodes] = await this.registry.getFormingCluster();
+
+      // Submit my exchange info to exchange coordinator
+      const submitTx = await this.exchangeCoordinator.submitExchangeInfo(clusterId, roundNumber, myExchangeInfo, clusterNodes);
       await submitTx.wait();
       console.log(`  ✓ Submitted my exchange info for round ${roundNumber}`);
       
@@ -395,7 +404,7 @@ class ZNode {
       const maxWait = 120; // 2 minutes
       let waited = 0;
       while (waited < maxWait) {
-        const [complete, submitted] = await this.registry.getExchangeRoundStatus(clusterId, roundNumber);
+        const [complete, submitted] = await this.exchangeCoordinator.getExchangeRoundStatus(clusterId, roundNumber);
         if (complete) {
           console.log(`  ✓ All nodes submitted (${submitted}/11)`);
           break;
@@ -406,7 +415,7 @@ class ZNode {
       }
       
       // Get all exchange info
-      const [addresses, exchangeInfos] = await this.registry.getExchangeRoundInfo(clusterId, roundNumber);
+      const [addresses, exchangeInfos] = await this.exchangeCoordinator.getExchangeRoundInfo(clusterId, roundNumber, clusterNodes);
       const my = this.wallet.address.toLowerCase();
       const peersExchangeInfo = [];
       for (let i = 0; i < addresses.length; i++) {
@@ -428,7 +437,11 @@ class ZNode {
       return false;
     }
   }
-  async participateInExchangeRounds(clusterId) {    try {      // Open cluster wallet      this.clusterWalletName = `${this.baseWalletName}_cluster_${clusterId.slice(2, 10)}`;            try {        await this.monero.openWallet(this.clusterWalletName, this.moneroPassword);      } catch (e) {        console.log('  ⚠️  Cluster wallet not found, cannot participate in exchange');        return false;      }            // Check if multisig is already ready      const msInfo = await this.monero.call('is_multisig');      if (msInfo.ready) {        console.log('  ✓ Multisig already ready');        return true;      }            // Participate in round 3      console.log('\n→ Participating in Round 3');      const round3Success = await this.participateInRound(clusterId, 3);      if (!round3Success) {        console.log('  ❌ Round 3 participation failed');        return false;      }            // Participate in round 4      console.log('\n→ Participating in Round 4');      const round4Success = await this.participateInRound(clusterId, 4);      if (!round4Success) {        console.log('  ❌ Round 4 participation failed');        return false;      }            // Verify multisig is ready      const finalInfo = await this.monero.call('is_multisig');      if (finalInfo.ready) {        console.log('\n✅ Multisig exchange complete and ready');        return true;      } else {        console.log('  ⚠️  Multisig not ready after exchanges');        return false;      }    } catch (e) {      console.log('  Exchange participation error:', e.message);      return false;    }  }    async participateInRound(clusterId, roundNumber) {    try {      // Export my multisig info      const myInfo = await this.monero.call('export_multisig_info');      const myExchangeInfo = myInfo.info;            // Submit to registry      const submitTx = await this.registry.submitExchangeInfo(clusterId, roundNumber, myExchangeInfo);      await submitTx.wait();      console.log(`  ✓ Submitted exchange info for round ${roundNumber}`);            // Wait for round to complete      console.log(`  Waiting for round ${roundNumber} to complete...`);      const maxWait = 120;      let waited = 0;      while (waited < maxWait) {        const [complete, submitted] = await this.registry.getExchangeRoundStatus(clusterId, roundNumber);        if (complete) {          console.log(`  ✓ Round complete (${submitted}/11)`);          break;        }        await new Promise(r => setTimeout(r, 5000));        waited += 5;      }            // Get all exchange info from registry      const [addresses, exchangeInfos] = await this.registry.getExchangeRoundInfo(clusterId, roundNumber);      const my = this.wallet.address.toLowerCase();      const peersExchangeInfo = [];      for (let i = 0; i < addresses.length; i++) {        if (addresses[i].toLowerCase() === my) continue;        if (exchangeInfos[i] && exchangeInfos[i].length > 0) {          peersExchangeInfo.push(exchangeInfos[i]);        }      }            // Import peer exchange infos      await this.monero.call('import_multisig_info', { info: peersExchangeInfo });      console.log(`  ✓ Imported ${peersExchangeInfo.length} peer exchange infos`);            return true;    } catch (e) {      console.log(`  ❌ Round ${roundNumber} error:`, e.message);      return false;    }  }\
+  async participateInExchangeRounds(clusterId) {    try {      // Open cluster wallet      this.clusterWalletName = `${this.baseWalletName}_cluster_${clusterId.slice(2, 10)}`;            try {        await this.monero.openWallet(this.clusterWalletName, this.moneroPassword);      } catch (e) {        console.log('  ⚠️  Cluster wallet not found, cannot participate in exchange');        return false;      }            // Check if multisig is already ready      const msInfo = await this.monero.call('is_multisig');      if (msInfo.ready) {        console.log('  ✓ Multisig already ready');        return true;      }            // Participate in round 3      console.log('\n→ Participating in Round 3');      const round3Success = await this.participateInRound(clusterId, 3);      if (!round3Success) {        console.log('  ❌ Round 3 participation failed');        return false;      }            // Participate in round 4      console.log('\n→ Participating in Round 4');      const round4Success = await this.participateInRound(clusterId, 4);      if (!round4Success) {        console.log('  ❌ Round 4 participation failed');        return false;      }            // Verify multisig is ready      const finalInfo = await this.monero.call('is_multisig');      if (finalInfo.ready) {        console.log('\n✅ Multisig exchange complete and ready');        return true;      } else {        console.log('  ⚠️  Multisig not ready after exchanges');        return false;      }    } catch (e) {      console.log('  Exchange participation error:', e.message);      return false;    }  }    async participateInRound(clusterId, roundNumber) {    try {      // Export my multisig info      const myInfo = await this.monero.call('export_multisig_info');      const myExchangeInfo = myInfo.info;            // Submit to registry      const submitTx = await this.exchangeCoordinator.submitExchangeInfo(clusterId, roundNumber, myExchangeInfo, clusterNodes);      await submitTx.wait();      console.log(`  ✓ Submitted exchange info for round ${roundNumber}`);            // Wait for round to complete      console.log(`  Waiting for round ${roundNumber} to complete...`);      const maxWait = 120;      let waited = 0;      while (waited < maxWait) {        const [complete, submitted] = await this.exchangeCoordinator.getExchangeRoundStatus(clusterId, roundNumber);        if (complete) {          console.log(`  ✓ Round complete (${submitted}/11)`);          break;        }        await new Promise(r => setTimeout(r, 5000));        waited += 5;      }            // Get all exchange info from registry      const [addresses, exchangeInfos] = await this.exchangeCoordinator.getExchangeRoundInfo(clusterId, roundNumber, clusterNodes);      const my = this.wallet.address.toLowerCase();      const peersExchangeInfo = [];      for (let i = 0; i < addresses.length; i++) {        if (addresses[i].toLowerCase() === my) continue;        if (exchangeInfos[i] && exchangeInfos[i].length > 0) {          peersExchangeInfo.push(exchangeInfos[i]);        }      }            // Import peer exchange infos      await this.monero.call('import_multisig_info', { info: peersExchangeInfo });      console.log(`  ✓ Imported ${peersExchangeInfo.length} peer exchange infos`);            return true;    } catch (e) {      console.log(`  ❌ Round ${roundNumber} error:`, e.message);      return false;    }  }\
+
+      // Fetch cluster nodes
+      const [clusterNodes] = await this.registry.getFormingCluster();
+
   async registerToQueue() {
     console.log('→ Registering to network...');
     
