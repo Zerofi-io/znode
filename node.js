@@ -460,14 +460,12 @@ class ZNode {
           try {
             let clusterId = null;
             try {
-              const [idx, last, done] = await this.registry.currentFormingCluster();
-              clusterId = await this.registry.allClusters(idx);
-            } catch (e1) {
-              try {
-                clusterId = await this.registry.getDepositCluster();
-              } catch (e2) {
-                if (selectedNodes.length === 11) console.log('Finalize check: could not determine clusterId yet');
-              }
+              // Compute clusterId from sorted selected nodes (standard pattern)
+              const sortedAddrs = selectedNodes.map(a => a.toLowerCase()).sort();
+              clusterId = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['address[]'], [sortedAddrs]));
+              console.log('Computed clusterId:', clusterId);
+            } catch (e) {
+              console.log('ClusterId computation failed:', e.message);
             }
             if (clusterId) {
               const myIndex = selectedNodes.map(a => a.toLowerCase()).indexOf(this.wallet.address.toLowerCase());
