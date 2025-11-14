@@ -27,6 +27,8 @@ class ZNode {
       'function getQueueStatus() external view returns (uint256, uint256, bool)',
       'function getFormingCluster() external view returns (address[] memory, uint256, bool)',
       'function getActiveClusterCount() external view returns (uint256)',
+      'function clearStaleCluster() external',
+      'function checkMultisigTimeout(bytes32 clusterId) external',
       'function registeredNodes(address) view returns (bool registered, bytes32 codeHash, string multisigInfo, uint256 registeredAt, bool inQueue, uint256 multisigSubmittedBlock)',
       'event NodeRegistered(address indexed node)',
       'event ClusterFormed(bytes32 indexed clusterId, address[] members)'
@@ -45,19 +47,19 @@ class ZNode {
     ];
 
     this.registry = new ethers.Contract(
-      '0xD6048dFAeA4bde92c40A4C00128509727e03f50A',
+      '0xa9e154A1245bae6E3cD2f31A46C1C16277AbF974',
       registryABI,
       this.wallet
     );
 
     this.staking = new ethers.Contract(
-      '0xd19181A3A1F0f66cA814E262E0d05200834DD262',
+      '0x2A668c72ce021f8286D9C1B19079efE2E2B7f5C4',
       stakingABI,
       this.wallet
     );
 
     this.zfi = new ethers.Contract(
-      '0xcceB838dC92fc48338e3333da85953257600D28D',
+      '0xa3E28DbFE0647ac8e8cF37db4bd5CF66a8c6bC5D',
       zfiABI,
       this.wallet
     );
@@ -430,7 +432,7 @@ class ZNode {
         const clusterNodes2 = selectedNodes2.map(a => a.toLowerCase());
         if (clusterNodes2.length === 11) {
           clusterIdForCleanup = ethers.keccak256(
-            ethers.AbiCoder.defaultAbiCoder().encode(['address[11]'], [clusterNodes2])
+            ethers.solidityPacked(['address[11]'], [clusterNodes2])
           );
         }
       } catch {}
@@ -536,7 +538,9 @@ class ZNode {
               // Compute clusterId exactly as in ClusterRegistry: keccak256(abi.encodePacked(address[11]))
               const clusterNodes = selectedNodes.map(a => a.toLowerCase());
               if (clusterNodes.length === 11) {
-                clusterId = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['address[11]'], [clusterNodes]));
+                clusterId = ethers.keccak256(
+                  ethers.solidityPacked(['address[11]'], [clusterNodes])
+                );
                 console.log('Computed clusterId:', clusterId);
               } else {
                 console.log('ClusterId computation skipped: expected 11 nodes, got', clusterNodes.length);
