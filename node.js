@@ -115,10 +115,10 @@ class ZNode {
       }
 
       // Approve if needed
-      const allowance = await this.zfi.allowance(this.wallet.address, '0x4292E4Af84cea07D2654CB5D97141C7D6a23be01');
+      const allowance = await this.zfi.allowance(this.wallet.address, '0xd19181A3A1F0f66cA814E262E0d05200834DD262');
       if (allowance < required) {
         console.log('  Approving ZFI for staking...');
-        const txA = await this.zfi.approve('0x4292E4Af84cea07D2654CB5D97141C7D6a23be01', required);
+        const txA = await this.zfi.approve('0xd19181A3A1F0f66cA814E262E0d05200834DD262', required);
         await txA.wait();
         console.log('  ✓ Approved');
       }
