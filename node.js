@@ -421,25 +421,55 @@ class ZNode {
 
   async participateInExchangeRounds(clusterId) {
     try {
-      // Open cluster wallet
-      this.clusterWalletName = `${this.baseWalletName}_cluster_${clusterId.slice(2, 10)}`;
-      
-      try {
-        await this.monero.openWallet(this.clusterWalletName, this.moneroPassword);
-      } catch (e) {
-        console.log('  ⚠️  Cluster wallet not found, cannot participate in exchange');
+      // Fetch forming cluster multisig info
+      const [addrList, infoList] = await this.registry.getFormingClusterMultisigInfo();
+      const my = this.wallet.address.toLowerCase();
+      const peers = [];
+      for (let i = 0; i < addrList.length; i++) {
+        if (addrList[i].toLowerCase() === my) continue;
+        const info = infoList[i];
+        if (info && info.length > 0) peers.push(info);
+      }
+      if (peers.length < 7) {
+        console.log(`  Not enough multisig infos yet (${peers.length}+1). Waiting...`);
         return false;
       }
       
-      // Check if multisig is already ready
-      const msInfo = await this.monero.call('is_multisig');
-      if (msInfo.ready) {
-        console.log('  ✓ Multisig already ready');
-        return true;
+      // Create/open cluster wallet
+      this.clusterWalletName = `${this.baseWalletName}_cluster_${clusterId.slice(2, 10)}`;
+      
+      try {
+        await this.monero.createWallet(this.clusterWalletName, this.moneroPassword);
+        console.log('  ✓ Created cluster wallet');
+      } catch (e) {
+        await this.monero.openWallet(this.clusterWalletName, this.moneroPassword);
+        console.log('  ✓ Opened cluster wallet');
       }
       
+      // Check if already multisig and ready
+      try {
+        const info = await this.monero.call('is_multisig');
+        if (info.multisig && info.ready) {
+          console.log('  ✓ Multisig already ready');
+          return true;
+        }
+        // If multisig but not ready, continue to exchanges
+        if (info.multisig && !info.ready) {
+          console.log('  → Multisig wallet exists, participating in exchanges...');
+        }
+      } catch {}
+      
+      // Initialize multisig if not already done
+      try {
+        const msInfo = await this.monero.call('is_multisig');
+        if (!msInfo.multisig) {
+          console.log('  → Initializing multisig...');
+          await this.makeMultisig(8, peers);
+        }
+      } catch {}
+      
       // Participate in round 3
-      console.log('\n→ Participating in Round 3');
+      console.log('  → Participating in Round 3');
       const round3Success = await this.participateInRound(clusterId, 3);
       if (!round3Success) {
         console.log('  ❌ Round 3 participation failed');
@@ -447,7 +477,7 @@ class ZNode {
       }
       
       // Participate in round 4
-      console.log('\n→ Participating in Round 4');
+      console.log('  → Participating in Round 4');
       const round4Success = await this.participateInRound(clusterId, 4);
       if (!round4Success) {
         console.log('  ❌ Round 4 participation failed');
@@ -457,7 +487,7 @@ class ZNode {
       // Verify multisig is ready
       const finalInfo = await this.monero.call('is_multisig');
       if (finalInfo.ready) {
-        console.log('\n✅ Multisig exchange complete and ready');
+        console.log('  ✅ Multisig exchange complete and ready');
         return true;
       } else {
         console.log('  ⚠️  Multisig not ready after exchanges');
