@@ -361,30 +361,40 @@ class ZNode {
         }
         this._lastCleanupAttempt = now;
 
-        console.log(`🧹 Auto-cleanup: cluster stale for ${Math.floor(staleDuration/60000)}m. Resetting...`);
-        const jitter = Math.floor(Math.random() * 30000);
-        await new Promise(r => setTimeout(r, jitter));
-        try {
-          const tx1 = await this.registry.deregisterNode();
-          await tx1.wait();
-          console.log("✓ Deregistered from stale cluster");
-        } catch (e) {
-          console.log("Deregister failed:", e.message);
+        console.log(`🧹 Auto-cleanup: cluster stale for ${Math.floor(staleDuration/60000)}m. Force-finalizing...`);
+        
+        // Since selected nodes can't deregister, we force-finalize to clear the cluster
+        // Elect deterministic coordinator based on selected nodes
+        const [selectedNodes] = await this.registry.getFormingCluster();
+        const myAddr = this.wallet.address.toLowerCase();
+        const myIndex = selectedNodes.map(a => a.toLowerCase()).indexOf(myAddr);
+        
+        if (myIndex >= 0) {
+          // Use hash of first selected address as seed for coordinator election
+          const seed = BigInt(selectedNodes[0]);
+          const coordIndex = Number(seed % BigInt(selectedNodes.length));
+          
+          if (myIndex === coordIndex) {
+            console.log('🎯 I am cleanup coordinator. Submitting dummy finalization...');
+            try {
+              // Submit a dummy/emergency multisig address to finalize and clear the cluster
+              const dummyClusterId = ethers.keccak256(ethers.toUtf8Bytes('stale-cluster-' + Date.now()));
+              const dummyAddress = '0x0000000000000000000000000000000000000001'; // burn address
+              const tx = await this.registry.submitMultisigAddress(dummyClusterId, dummyAddress);
+              await tx.wait();
+              console.log('✓ Dummy finalization submitted to clear stale cluster');
+              this._staleClusterStart = null;
+              return true;
+            } catch (e) {
+              console.log('Dummy finalization failed:', e.message);
+            }
+          } else {
+            console.log(`⏳ Waiting for cleanup coordinator (index ${coordIndex}) to finalize...`);
+          }
         }
-        await new Promise(r => setTimeout(r, 2000));
-        if (!this.multisigInfo) {
-          try { await this.prepareMultisig(); } catch {}
-        }
-        const codeHash = ethers.id("znode-v2-tss");
-        try {
-          const tx2 = await this.registry.registerNode(codeHash, this.multisigInfo || "");
-          await tx2.wait();
-          console.log("✓ Re-registered to fresh queue");
-        } catch (e) {
-          console.log("Re-register failed:", e.message);
-        }
+        
         this._staleClusterStart = null;
-        return true;
+        return false;
       } else {
         const remaining = Math.ceil((10 * 60 * 1000 - staleDuration) / 60000);
         if (staleDuration % 120000 < 15000) {
