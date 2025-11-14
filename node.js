@@ -191,6 +191,26 @@ class ZNode {
       
       return this.multisigInfo;
     } catch (error) {
+      // If wallet is already multisig from previous deployment, recreate it
+      if (error.message && error.message.includes('already multisig')) {
+        console.log('  Wallet is already multisig from old deployment. Recreating...');
+        try {
+          await this.monero.closeWallet();
+          await new Promise(r => setTimeout(r, 500));
+          // Delete and recreate
+          await this.monero.createWallet(this.baseWalletName, this.moneroPassword);
+          console.log('  ✓ Wallet recreated');
+          // Now try prepare_multisig again
+          const result = await this.monero.call('prepare_multisig');
+          this.multisigInfo = result.multisig_info;
+          console.log('✓ Multisig info generated');
+          console.log(`  Info: ${this.multisigInfo.substring(0, 50)}...`);
+          return this.multisigInfo;
+        } catch (e) {
+          console.error('❌ Failed to recreate wallet:', e.message);
+          throw e;
+        }
+      }
       console.error('❌ prepare_multisig failed:', error.message);
       throw error;
     }
