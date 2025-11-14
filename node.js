@@ -556,8 +556,23 @@ class ZNode {
     const nodeInfo = await this.registry.registeredNodes(this.wallet.address);
     
     if (nodeInfo.registrationTime > 0) {
-      console.log('✓ Already registered\n');
-      return;
+      // Check if we're in ghost state (registered but not in queue/forming cluster)
+      const [queueLen, selectedCount] = await this.registry.getQueueStatus();
+      const [formingCluster] = await this.registry.getFormingCluster();
+      
+      const inFormingCluster = formingCluster.map(a => a.toLowerCase()).includes(this.wallet.address.toLowerCase());
+      
+      if (!inFormingCluster && selectedCount === 0 && queueLen === 0) {
+        console.log('⚠️  Ghost state detected: registered but not in queue or forming cluster');
+        console.log('  Deregistering and re-registering...');
+        const deregTx = await this.registry.deregisterNode();
+        await deregTx.wait();
+        await new Promise(r => setTimeout(r, 2000));
+        // Fall through to register again
+      } else {
+        console.log('✓ Already registered\\n');
+        return;
+      }
     }
     
     if (nodeInfo.registered && !nodeInfo.inQueue) {
