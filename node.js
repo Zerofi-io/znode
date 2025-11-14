@@ -19,6 +19,7 @@ class ZNode {
     const registryABI = [
       'function registerNode(bytes32 codeHash, string multisigInfo) external',
       'function submitMultisigAddress(bytes32 clusterId, string moneroAddress) external',
+      'function confirmCluster(string moneroAddress) external',
       'function getFormingClusterMultisigInfo() external view returns (address[] memory, string[] memory)',
       'function currentFormingCluster() external view returns (uint256, uint256, bool)',
       'function allClusters(uint256) external view returns (bytes32)',
@@ -281,6 +282,7 @@ class ZNode {
       console.log(`✓ Multisig created locally: ${addr}`);
       // Submit to registry
       const tx = await this.registry.submitMultisigAddress(clusterId, addr);
+      'function confirmCluster(string moneroAddress) external',
       await tx.wait();
       console.log('✓ Submitted multisig address to registry');
       
