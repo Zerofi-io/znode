@@ -212,7 +212,7 @@ class ZNode {
     }
   }
 
-  async finalizeClusterWithMultisigCoordination() {
+  async finalizeClusterWithMultisigCoordination(clusterId) {
     try {
       // Fetch forming cluster multisig info list (addresses aligned to selectedAddrs)
       const [addrList, infoList] = await this.registry.getFormingClusterMultisigInfo();
@@ -482,7 +482,7 @@ class ZNode {
                 console.log('DEBUG: myIndex=%d coordIndex=%d myAddr=%s', myIndex, coordIndex, this.wallet.address);
                 if (myIndex === coordIndex) {
                   console.log('🎯 I am the coordinator for this cluster. Finalizing...');
-                  await this.finalizeClusterWithMultisigCoordination();
+                  await this.finalizeClusterWithMultisigCoordination(clusterId);
                 } else {
                   console.log('⏳ Waiting for coordinator to finalize cluster...');
                 }
