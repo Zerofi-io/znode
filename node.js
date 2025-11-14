@@ -260,9 +260,15 @@ class ZNode {
         await this.monero.createWallet(this.clusterWalletName, this.moneroPassword);
         console.log('✓ Cluster wallet created');
       } catch (e) {
-        // Wallet might exist from previous attempt - open it
-        await this.monero.openWallet(this.clusterWalletName, this.moneroPassword);
-        console.log('✓ Cluster wallet opened');
+        // Wallet exists from previous attempt and might be already multisig
+        // Close any open wallet, delete the old one, and create fresh
+        console.log('  Cluster wallet exists from previous attempt. Recreating...');
+        try {
+          await this.monero.closeWallet();
+        } catch {}
+        await new Promise(r => setTimeout(r, 500));
+        await this.monero.createWallet(this.clusterWalletName, this.moneroPassword);
+        console.log('✓ Cluster wallet recreated');
       }
       
       // Create 8-of-11 multisig in the cluster wallet
