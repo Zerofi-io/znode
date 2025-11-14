@@ -287,7 +287,8 @@ class ZNode {
       const registered = (info.registered !== undefined) ? info.registered : info[0];
       const inQueue = (info.inQueue !== undefined) ? info.inQueue : info[4];
       const selectedCount = selectedNodes.length;
-      const staleRound = completed && selectedCount === 0 && canRegister;
+      // Treat any completed round with registration window open as stale; requeue to kick off a new round
+      const staleRound = completed && canRegister;
       const needsQueue = (!registered || (registered && !inQueue));
       const degenerate = inQueue && Number(queueLen) === 0 && canRegister;
       if (staleRound || degenerate || needsQueue) {
