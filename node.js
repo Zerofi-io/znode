@@ -355,6 +355,12 @@ class ZNode {
       }
       const staleDuration = now - this._staleClusterStart;
       if (staleDuration > 10 * 60 * 1000) {
+        // Prevent constant retries - only attempt once per 5 minutes
+        if (this._lastCleanupAttempt && (now - this._lastCleanupAttempt) < 5 * 60 * 1000) {
+          return false;
+        }
+        this._lastCleanupAttempt = now;
+
         console.log(`🧹 Auto-cleanup: cluster stale for ${Math.floor(staleDuration/60000)}m. Resetting...`);
         const jitter = Math.floor(Math.random() * 30000);
         await new Promise(r => setTimeout(r, jitter));
