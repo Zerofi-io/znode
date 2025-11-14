@@ -706,14 +706,16 @@ class ZNode {
     
     const printStatus = async () => {
       try {
-        // Periodic ghost state detection
+        const [queueLen, , canRegister] = await this.registry.getQueueStatus();
+        const [selectedNodes, lastSelection] = await this.registry.getFormingCluster();
+      const completed = selectedNodes.length === 11;
+        
+        // Ghost detection: if registered but not in forming cluster and queue is 0
         const nodeInfo = await this.registry.registeredNodes(this.wallet.address);
         if (nodeInfo.registrationTime > 0) {
-          const [queueCheck, selectedCheck] = await this.registry.getQueueStatus();
-          const [formingCheck] = await this.registry.getFormingCluster();
-          const inFormingCheck = formingCheck.map(a => a.toLowerCase()).includes(this.wallet.address.toLowerCase());
-          if (!inFormingCheck && selectedCheck === 0 && queueCheck === 0) {
-            console.log("⚠️  Ghost state detected during monitoring - deregistering and re-registering...");
+          const inFormingCluster = selectedNodes.map(a => a.toLowerCase()).includes(this.wallet.address.toLowerCase());
+          if (!inFormingCluster && selectedNodes.length < 11 && queueLen === 0) {
+            console.log("⚠️  Ghost detected: registered but queue is 0 and not in forming cluster");
             const deregTx = await this.registry.deregisterNode();
             await deregTx.wait();
             await new Promise(r => setTimeout(r, 2000));
@@ -722,9 +724,6 @@ class ZNode {
           }
         }
 
-        const [queueLen, , canRegister] = await this.registry.getQueueStatus();
-        const [selectedNodes, lastSelection] = await this.registry.getFormingCluster();
-      const completed = selectedNodes.length === 11;
         const clusterCount = 0; // getActiveClusterCount removed from new contract
         const selectedCount = selectedNodes.length;
         const isSelected = selectedNodes.map(a => a.toLowerCase()).includes(this.wallet.address.toLowerCase());
