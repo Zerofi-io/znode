@@ -343,7 +343,7 @@ class ZNode {
         
         const shownSelected = stale ? 0 : selectedCount;
         console.log(`Queue: ${queueLen} | Selected: ${shownSelected}/11 | Clusters: ${clusterCount} | CanRegister: ${canRegister} | Completed: ${completed}`);
-        await this.requeueIfStale({ queueLen, selectedNodes, lastSelection, completed, canRegister });
+        // DISABLED:         await this.requeueIfStale({ queueLen, selectedNodes, lastSelection, completed, canRegister });
 
         // Attempt to trigger selection if conditions met and data not stale
         const canSelectNow = (selectedCount < 11) && ((Number(queueLen) + selectedCount) >= 11);
