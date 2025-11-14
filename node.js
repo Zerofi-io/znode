@@ -288,14 +288,13 @@ class ZNode {
       const lastSelMs = Number(lastSelection) * 1000;
       const ageMs = Date.now() - lastSelMs;
       // Stale round: contract reports completed, selected cleared, and registration window open
-      const staleRound = completed && selectedNodes.length === 0 && canRegister && ageMs > 60 * 1000;
+      const staleRound = completed && selectedNodes.length === 0 && canRegister;
       const needsQueue = (!registered || (registered && !inQueue));
-      // Also handle degenerate case: marked inQueue but global queue is 0 and window open
-      const degenerate = inQueue && Number(queueLen) === 0 && canRegister && ageMs > 60 * 1000;
+      const degenerate = inQueue && Number(queueLen) === 0 && canRegister;
       if (staleRound || degenerate || needsQueue) {
         const now = Date.now();
         this._lastRequeueTs = this._lastRequeueTs || 0;
-        if (now - this._lastRequeueTs < 2 * 60 * 1000) {
+        if (now - this._lastRequeueTs < 60 * 1000) {
           return; // backoff 5m
         }
         console.log('↻ Re-queuing: previous round cleared without forming (or degenerate queue).');
@@ -317,6 +316,8 @@ class ZNode {
           const [ql2] = await this.registry.getQueueStatus();
           console.log(`↺ Re-queued. New queue size: ${ql2}`);
         } catch {}
+      } else {
+        console.log('Requeue check: no action (staleRound=%s, degenerate=%s, needsQueue=%s)', staleRound, degenerate, needsQueue);
       }
     } catch (e) {
       // ignore state read errors
@@ -412,7 +413,7 @@ class ZNode {
     
     // Print immediately and then on interval
     await printStatus();
-    setInterval(printStatus, 60000);
+    setInterval(printStatus, 15000);
   }
 
 }
