@@ -478,6 +478,7 @@ class ZNode {
                   seed = BigInt('0x' + (hex.slice(0,16) || '1'));
                 }
                 const coordIndex = Number(seed % 11n);
+                console.log('DEBUG: myIndex=%d coordIndex=%d myAddr=%s', myIndex, coordIndex, this.wallet.address);
                 if (myIndex === coordIndex) {
                   console.log('🎯 I am the coordinator for this cluster. Finalizing...');
                   await this.finalizeClusterWithMultisigCoordination();
