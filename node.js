@@ -30,7 +30,7 @@ class ZNode {
       'function getActiveClusterCount() external view returns (uint256)',
       'function clearStaleCluster() external',
       'function checkMultisigTimeout(bytes32 clusterId) external',
-      'function registeredNodes(address) view returns (bool registered, bytes32 codeHash, string multisigInfo, uint256 registeredAt, bool inQueue, uint256 multisigSubmittedBlock)',
+      'function registeredNodes(address) view returns (bytes32 codeHash, uint256 registrationTime)',
       'event NodeRegistered(address indexed node)',
       'event ClusterFormed(bytes32 indexed clusterId, address[] members)'
     ];
@@ -513,7 +513,7 @@ class ZNode {
     
     const nodeInfo = await this.registry.registeredNodes(this.wallet.address);
     
-    if (nodeInfo.registered && nodeInfo.inQueue) {
+    if (nodeInfo.registrationTime > 0) {
       console.log('✓ Already registered\n');
       return;
     }
@@ -549,9 +549,7 @@ class ZNode {
       const [queueLen, , canRegister] = await this.registry.getQueueStatus();
       const [selectedNodes, lastSelection, completed] = await this.registry.getFormingCluster();
       const info = await this.registry.registeredNodes(this.wallet.address);
-      const registered = (info.registered !== undefined) ? info.registered : info[0];
-      const inQueue = (info.inQueue !== undefined) ? info.inQueue : info[4];
-      const selectedCount = selectedNodes.length;
+      const registered = info.registrationTime > 0
       // Treat any completed round with registration window open as stale; requeue to kick off a new round
       const staleRound = completed && canRegister;
       const needsQueue = (!registered || (registered && !inQueue));
