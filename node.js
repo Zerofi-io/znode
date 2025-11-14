@@ -45,7 +45,7 @@ class ZNode {
     ];
 
     this.registry = new ethers.Contract(
-      '0xC35CC6a4176dB55dbb290EDbEbae5A08BE5c6c8d',
+      '0x3C9914100F165793022CA16509FDF0A2B501F349',
       registryABI,
       this.wallet
     );
