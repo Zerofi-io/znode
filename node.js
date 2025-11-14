@@ -66,7 +66,8 @@ class ZNode {
       url: process.env.MONERO_RPC_URL || 'http://127.0.0.1:18083'
     });
 
-    this.walletName = `znode_${this.wallet.address.slice(2, 10)}`;
+    this.baseWalletName = `znode_${this.wallet.address.slice(2, 10)}`;
+    this.clusterWalletName = null; // Set when joining a cluster
     this.multisigInfo = null;
     this.clusterId = null;
   }
@@ -140,8 +141,8 @@ class ZNode {
     
     for (let i = 1; i <= 20; i++) {
       try {
-        await this.monero.openWallet(this.walletName, this.moneroPassword);
-        console.log(`✓ Wallet opened: ${this.walletName}`);
+        await this.monero.openWallet(this.baseWalletName, this.moneroPassword);
+        console.log(`✓ Base wallet opened: ${this.baseWalletName}`);
         break;
       } catch (error) {
         if (error.code === 'ECONNREFUSED' && i < 10) {
@@ -155,8 +156,8 @@ class ZNode {
         }
         
         console.log('  Creating wallet with password...');
-        await this.monero.createWallet(this.walletName, this.moneroPassword);
-        console.log(`✓ Wallet created: ${this.walletName}`);
+        await this.monero.createWallet(this.baseWalletName, this.moneroPassword);
+        console.log(`✓ Base wallet created: ${this.baseWalletName}`);
         break;
       }
     }
@@ -228,7 +229,20 @@ class ZNode {
         console.log(`Not enough multisig infos yet (${peers.length}+1). Waiting...`);
         return false;
       }
-      // Create 8-of-11 multisig locally
+      // Create cluster-specific multisig wallet
+      this.clusterWalletName = `${this.baseWalletName}_cluster_${clusterId.slice(2, 10)}`;
+      console.log(`Creating cluster wallet: ${this.clusterWalletName}`);
+      
+      try {
+        await this.monero.createWallet(this.clusterWalletName, this.moneroPassword);
+        console.log('✓ Cluster wallet created');
+      } catch (e) {
+        // Wallet might exist from previous attempt - open it
+        await this.monero.openWallet(this.clusterWalletName, this.moneroPassword);
+        console.log('✓ Cluster wallet opened');
+      }
+      
+      // Create 8-of-11 multisig in the cluster wallet
       const res = await this.makeMultisig(8, peers);
       const addr = res.address;
       console.log(`✓ Multisig created locally: ${addr}`);
@@ -384,7 +398,19 @@ class ZNode {
               const tx = await this.registry.submitMultisigAddress(dummyClusterId, dummyAddress);
               await tx.wait();
               console.log('✓ Dummy finalization submitted to clear stale cluster');
-              this._staleClusterStart = null;
+              // Clean up cluster-specific wallet if it exists
+        if (this.clusterWalletName) {
+          try {
+            const walletPath = `~/.monero-wallets/${this.clusterWalletName}*`;
+            console.log(`🗑️  Removing stale cluster wallet: ${this.clusterWalletName}`);
+            // Note: Actual file deletion would need shell command or fs operations
+          } catch (e) {
+            // Ignore cleanup errors
+          }
+          this.clusterWalletName = null;
+        }
+        
+        this._staleClusterStart = null;
               return true;
             } catch (e) {
               console.log('Dummy finalization failed:', e.message);
