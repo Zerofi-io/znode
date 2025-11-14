@@ -47,19 +47,19 @@ class ZNode {
     ];
 
     this.registry = new ethers.Contract(
-      '0x4A85418A95F178675F6E43C2023dc371a5EdFdc8',
+      '0xbCBCAA233c05b2Fc02cf9A9aa2Ce500F645895E2',
       registryABI,
       this.wallet
     );
 
     this.staking = new ethers.Contract(
-      '0xA38b1E28A67357D7De596472B1CC3daFf78478A2',
+      '0xc4D4dB2f5Ea4D2AE57C07D95E71Dee71D660E85c',
       stakingABI,
       this.wallet
     );
 
     this.zfi = new ethers.Contract(
-      '0x8E94693CC23b75EE33fd7f8D18B1Db339271C202',
+      '0xf019C66DAB47Cc8EfBE10EF1DCCa18E45CF2427d',
       zfiABI,
       this.wallet
     );
@@ -283,6 +283,20 @@ class ZNode {
       const tx = await this.registry.submitMultisigAddress(clusterId, addr);
       await tx.wait();
       console.log('✓ Submitted multisig address to registry');
+      
+      // Finalize the cluster by calling confirmCluster
+      try {
+        const finalizeTx = await this.registry.confirmCluster(addr);
+        await finalizeTx.wait();
+        console.log('✓ Cluster finalized on-chain');
+      } catch (e) {
+        if (e.message.includes('already exists')) {
+          console.log('  Cluster already finalized');
+        } else {
+          console.log('  Finalization error:', e.message);
+        }
+      }
+      
       return true;
     } catch (e) {
       console.log('Coordinator finalize error:', e.message || String(e));
