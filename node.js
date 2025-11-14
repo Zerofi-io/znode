@@ -45,19 +45,19 @@ class ZNode {
     ];
 
     this.registry = new ethers.Contract(
-      '0x738D6Ab187Dfe73Bc2427dE2CEE957fdC34c0687',
+      '0xD6048dFAeA4bde92c40A4C00128509727e03f50A',
       registryABI,
       this.wallet
     );
 
     this.staking = new ethers.Contract(
-      '0x4292E4Af84cea07D2654CB5D97141C7D6a23be01',
+      '0xd19181A3A1F0f66cA814E262E0d05200834DD262',
       stakingABI,
       this.wallet
     );
 
     this.zfi = new ethers.Contract(
-      '0x1736668a18AE7C46011dF93A12a6b9438174814F',
+      '0xcceB838dC92fc48338e3333da85953257600D28D',
       zfiABI,
       this.wallet
     );
