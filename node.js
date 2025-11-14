@@ -435,6 +435,7 @@ class ZNode {
 
         // Attempt to trigger selection if conditions met and data not stale
         const canSelectNow = (selectedCount < 11) && ((Number(queueLen) + selectedCount) >= 11);
+        if (canSelectNow) console.log('DEBUG: Attempting selection (queue=%d, selected=%d)', queueLen, selectedCount);
         if (canSelectNow) {
           try {
             const tx = await this.registry.selectNextNode();
