@@ -62,7 +62,7 @@ The logs: `journalctl -u znode -f`; the daemon writes /data/monero/log/monerod.l
 
 Download the new release and check it as above, then run `sudo ./znode join` again. It asks the same two things, installs the new binary and restarts the node; every step whose state already holds does nothing, so the key and the stake stay as they are.
 
-A release that starts a new chain (a re-genesis; its notes say so) needs nothing more: at its restart the node finds that its store belongs to another chain, forgets its old key shares, removes its wallet and chain store and starts on the new chain from its block 0, logging both chain ids. The node key and the secret stay, and the join stakes again only when the node is not bonded at the staking contract the new genesis names.
+A release that starts a new chain (a re-genesis; its notes say so) needs nothing more: the join stops the node when the genesis changes, and its init step leaves the old chain (the old key shares forgotten, the wallet and chain store removed, the old chain recorded as left) before the node starts on the new chain from its block 0; the join prints a line saying so. The node key and the secret stay, and the join stakes again only when the node is not bonded at the staking contract the new genesis names. A node never returns to a chain it left with the same key, and never empties anything at a plain restart: a node started over a store of another chain stops and says so.
 
 ## Stop
 
