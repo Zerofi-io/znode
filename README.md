@@ -11,6 +11,18 @@ Every node runs this one binary beside its own Monero daemon and bonds 1,000,000
 - Your own Sepolia RPC URL (http or https). The build already holds two public endpoints, ethereum-sepolia-rpc.publicnode.com and sepolia.gateway.tenderly.co, and refuses either one as yours.
 - A new Ethereum key made for this node: it becomes the node's own key and is stored on the server. Its address needs 1,000,000 ZFI for the bond and some Sepolia ETH for the node's own transactions: the approve and the stake at the join, the exit and the release when it leaves. The running node sends no transactions.
 
+## Node specs
+
+Per host, one node plus one monerod:
+
+| Part | Spec |
+|---|---|
+| CPU | 4 vCPU |
+| RAM | 8 GB |
+| Disk | 250 GB SSD or NVMe |
+| Network | public IPv4, 1 Gbit port, 2 TB a month or unmetered |
+| OS | Ubuntu 24.04, x86_64, systemd |
+
 ## Download and check
 
 ```
