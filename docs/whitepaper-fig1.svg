@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 452" width="760" height="452" font-family="Helvetica, Arial, sans-serif" font-size="11.5" role="img" aria-label="Nodes read both chains and write only their own ledger">
+  <defs>
+    <marker id="arch-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#9a9a9a"/>
+    </marker>
+  </defs>
+  <rect width="760" height="452" fill="#ffffff"/>
+  <text x="24" y="28" font-size="15" font-weight="600" fill="#1a1a1a">Nodes read both chains and write only their own ledger</text>
+  <!-- actors -->
+  <rect x="24" y="52" width="536" height="56" rx="8" fill="none" stroke="#9a9a9a" stroke-width="1.25"/>
+  <text x="40" y="76" font-size="13" font-weight="600" fill="#1a1a1a">Depositors, redeemers, operators, delegators</text>
+  <text x="40" y="92" fill="#6b6b6b">ask any node for an address or a proof; pay their own gas</text>
+  <!-- node network -->
+  <rect x="24" y="156" width="688" height="136" rx="8" fill="none" stroke="#9a9a9a" stroke-width="1.25" stroke-dasharray="4 3"/>
+  <text x="40" y="177" font-size="13" font-weight="600" fill="#1a1a1a">Node network: equal bonded nodes, one identical binary each</text>
+  <rect x="40" y="188" width="208" height="88" rx="8" fill="#2f6fdb" fill-opacity="0.12" stroke="#2f6fdb" stroke-width="2"/>
+  <text x="144" y="212" text-anchor="middle" font-size="13" font-weight="600" fill="#1a1a1a">The ledger</text>
+  <text x="144" y="228" text-anchor="middle" fill="#1a1a1a">a BFT chain, final per block</text>
+  <text x="144" y="244" text-anchor="middle" fill="#1a1a1a">decides every shared fact</text>
+  <text x="144" y="260" text-anchor="middle" fill="#1a1a1a">height is the only clock</text>
+  <rect x="264" y="188" width="208" height="88" rx="8" fill="none" stroke="#9a9a9a" stroke-width="1.25"/>
+  <text x="368" y="212" text-anchor="middle" font-size="13" font-weight="600" fill="#1a1a1a">Clusters</text>
+  <text x="368" y="228" text-anchor="middle" fill="#1a1a1a">20 to 50 nodes per wallet</text>
+  <text x="368" y="244" text-anchor="middle" fill="#1a1a1a">keys exist only as shares</text>
+  <text x="368" y="260" text-anchor="middle" fill="#1a1a1a">sign batches and payouts</text>
+  <rect x="488" y="188" width="208" height="88" rx="8" fill="none" stroke="#9a9a9a" stroke-width="1.25"/>
+  <text x="592" y="212" text-anchor="middle" font-size="13" font-weight="600" fill="#1a1a1a">Public interface</text>
+  <text x="592" y="228" text-anchor="middle" fill="#1a1a1a">one read interface per node</text>
+  <text x="592" y="244" text-anchor="middle" fill="#1a1a1a">each answer carries the head</text>
+  <text x="592" y="260" text-anchor="middle" fill="#1a1a1a">and its certificate</text>
+  <!-- chains and explorer -->
+  <rect x="40" y="340" width="208" height="88" rx="8" fill="none" stroke="#9a9a9a" stroke-width="1.25"/>
+  <text x="144" y="364" text-anchor="middle" font-size="13" font-weight="600" fill="#1a1a1a">Monero chain</text>
+  <text x="144" y="380" text-anchor="middle" fill="#1a1a1a">one pruned daemon per node</text>
+  <text x="144" y="396" text-anchor="middle" fill="#1a1a1a">custody wallets, one per cluster</text>
+  <text x="144" y="412" text-anchor="middle" fill="#1a1a1a">view keys public</text>
+  <rect x="264" y="340" width="208" height="88" rx="8" fill="none" stroke="#9a9a9a" stroke-width="1.25"/>
+  <text x="368" y="364" text-anchor="middle" font-size="13" font-weight="600" fill="#1a1a1a">Explorer</text>
+  <text x="368" y="380" text-anchor="middle" fill="#1a1a1a">indexes what nodes answer</text>
+  <text x="368" y="396" text-anchor="middle" fill="#1a1a1a">verifies every certificate</text>
+  <text x="368" y="412" text-anchor="middle" fill="#1a1a1a">holds no key, decides nothing</text>
+  <rect x="488" y="340" width="208" height="88" rx="8" fill="none" stroke="#9a9a9a" stroke-width="1.25"/>
+  <text x="592" y="364" text-anchor="middle" font-size="13" font-weight="600" fill="#1a1a1a">Settlement chain (EVM)</text>
+  <text x="592" y="380" text-anchor="middle" fill="#1a1a1a">ZFI, staking, zXMR, registry</text>
+  <text x="592" y="396" text-anchor="middle" fill="#1a1a1a">no owner, pause or upgrade</text>
+  <text x="592" y="412" text-anchor="middle" fill="#1a1a1a">read only at finality</text>
+  <!-- connectors -->
+  <g fill="none" stroke="#9a9a9a" stroke-width="1.25">
+    <path d="M368 108V156" marker-start="url(#arch-arrow)" marker-end="url(#arch-arrow)"/>
+    <path d="M560 96H736V384H696" marker-end="url(#arch-arrow)"/>
+    <path d="M144 292V340" marker-start="url(#arch-arrow)" marker-end="url(#arch-arrow)"/>
+    <path d="M368 292V340" marker-end="url(#arch-arrow)"/>
+    <path d="M592 340V292" marker-end="url(#arch-arrow)"/>
+  </g>
+  <text x="378" y="136" fill="#6b6b6b">address requests; proofs and signatures back</text>
+  <text x="572" y="62" fill="#6b6b6b">own transactions carry</text>
+  <text x="572" y="76" fill="#6b6b6b">the ledger signatures</text>
+  <text x="154" y="320" fill="#6b6b6b">sees deposits, relays payouts</text>
+  <text x="378" y="320" fill="#6b6b6b">serves reads</text>
+  <text x="602" y="320" fill="#6b6b6b">read at finality</text>
+</svg>
